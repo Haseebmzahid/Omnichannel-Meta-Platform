@@ -2,7 +2,8 @@ import { createHmac, randomUUID } from 'node:crypto';
 import 'reflect-metadata';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { InboundAiService } from '../../ai/inbound-ai.service';
 import type { Clinic, Contact, Conversation } from '../../generated/prisma/client';
 import { ChannelKey, MessageContentType, MessageDeliveryStatus } from '../../generated/prisma/enums';
 import { ConversationService } from '../../messaging/conversation.service';
@@ -100,11 +101,14 @@ describe('WhatsApp status webhook -> Messaging Core (integration)', () => {
       },
     });
 
+    const inboundAiService = { processInboundMessage: vi.fn().mockResolvedValue(null) } as unknown as InboundAiService;
+
     controller = new WhatsAppWebhookController(
       new WhatsAppWebhookVerificationService('unused-in-this-test'),
       new WhatsAppSignatureService(APP_SECRET),
       new WhatsAppAccountResolverService(PHONE_NUMBER_ID, clinic.id),
       messageService,
+      inboundAiService,
     );
   });
 

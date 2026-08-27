@@ -444,4 +444,47 @@ describe('Messaging core', () => {
     const unchanged = await prisma.message.findUniqueOrThrow({ where: { id: message.id } });
     expect(unchanged.deliveryStatus).toBe(MessageDeliveryStatus.SENT);
   });
+
+  it('21. getRecentConversationMessages returns the most recent N messages, chronologically ordered (Task 4C-8)', async () => {
+    const externalContactId = randomUUID();
+    const externalThreadKey = randomUUID();
+    const first = await ingest({ channelAccountRef: 'msgtest-21', externalContactId, externalThreadKey, text: 'one' });
+    await ingest({ channelAccountRef: 'msgtest-21', externalContactId, externalThreadKey, text: 'two' });
+    await ingest({ channelAccountRef: 'msgtest-21', externalContactId, externalThreadKey, text: 'three' });
+    await ingest({ channelAccountRef: 'msgtest-21', externalContactId, externalThreadKey, text: 'four' });
+
+    // The oldest-first pagination method would return ['one', 'two'] for a
+    // limit of 2 — this method must return the two *most recent*, still in
+    // chronological order.
+    const recent = await messageService.getRecentConversationMessages({
+      clinicId: clinicA.id,
+      conversationId: first.conversation.id,
+      limit: 2,
+    });
+
+    expect(recent.map((m) => m.text)).toEqual(['three', 'four']);
+  });
+
+  it('22. getRecentConversationMessages defaults to a bounded limit and never loads an unbounded history', async () => {
+    const inbound = await ingest({ channelAccountRef: 'msgtest-22' });
+
+    const recent = await messageService.getRecentConversationMessages({
+      clinicId: clinicA.id,
+      conversationId: inbound.conversation.id,
+    });
+
+    expect(recent.length).toBeLessThanOrEqual(20);
+    expect(recent.map((m) => m.text)).toContain('Hello from the patient');
+  });
+
+  it('23. getRecentConversationMessages rejects a conversation belonging to another clinic', async () => {
+    const bResult = await messageService.ingestInboundMessage(
+      baseInboundMessage({ clinicId: clinicB.id, channelAccountRef: 'msgtest-23-b' }),
+    );
+    createdContactIds.add(bResult.conversation.contactId);
+
+    await expect(
+      messageService.getRecentConversationMessages({ clinicId: clinicA.id, conversationId: bResult.conversation.id }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundException);
+  });
 });

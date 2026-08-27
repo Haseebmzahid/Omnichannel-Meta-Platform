@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
+import { AiModule } from '../../ai/ai.module';
 import { config } from '../../config';
 import { MessagingModule } from '../../messaging/messaging.module';
 import { WhatsAppAccountResolverService } from './whatsapp-account-resolver.service';
@@ -25,8 +26,16 @@ import { WhatsAppWebhookVerificationService } from './whatsapp-webhook-verificat
 // their specs. WhatsAppOutboundService itself needs no config directly —
 // it only orchestrates MessageService + WhatsAppSendService — so it is
 // registered as a plain provider, resolved through normal Nest DI.
+//
+// AiModule (Task 4C-8): WhatsAppWebhookController needs InboundAiService to
+// trigger AI processing after a message is ingested. forwardRef() is used
+// because AiModule, in turn, (transitively, via ChannelOutboundModule)
+// imports this module for WhatsAppOutboundService — a genuine module
+// cycle, not accidental (inbound triggers AI; AI's outbound path runs back
+// through this same module) — see ai.module.ts's header comment for the
+// full explanation.
 @Module({
-  imports: [MessagingModule],
+  imports: [MessagingModule, forwardRef(() => AiModule)],
   controllers: [WhatsAppWebhookController],
   providers: [
     { provide: WhatsAppSignatureService, useFactory: () => new WhatsAppSignatureService(config.WHATSAPP_APP_SECRET) },

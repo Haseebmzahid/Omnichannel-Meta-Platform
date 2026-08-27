@@ -1,12 +1,21 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { AppointmentModule } from '../appointment/appointment.module';
 import { AppointmentService } from '../appointment/appointment.service';
+import { ChannelOutboundModule } from '../channels/channel-outbound.module';
+import { ChannelOutboundDispatcher } from '../channels/channel-outbound-dispatcher.service';
 import { config } from '../config';
+import { KnowledgeModule } from '../knowledge/knowledge.module';
+import { ClinicKnowledgeService } from '../knowledge/knowledge.service';
+import { MessagingModule } from '../messaging/messaging.module';
+import { AiContextService } from './ai-context.service';
 import { AiOrchestratorService } from './ai-orchestrator.service';
 import { AI_PROVIDER } from './ai-provider.interface';
+import { InboundAiService } from './inbound-ai.service';
 import { GeminiAIProvider } from './providers/gemini.provider';
 import { ToolRegistry } from './tool.types';
 import { createCheckAvailabilityTool } from './tools/check-availability.tool';
+import { createSearchClinicKnowledgeTool } from './tools/search-clinic-knowledge.tool';
+import { createSendMessageTool } from './tools/send-message.tool';
 
 // ============================================================================
 // Safety boundary (Task 4C-5 Part 7 / Task 4C-6 Part 9 — see ADR-009 and
@@ -30,7 +39,19 @@ import { createCheckAvailabilityTool } from './tools/check-availability.tool';
 //     business logic — it only threads messages and dispatches tool calls.
 //   - Every real-world effect a tool can have goes through an existing,
 //     already-authorized domain service — check_availability calls
-//     AppointmentService.checkAvailability(), nothing else.
+//     AppointmentService.checkAvailability(), nothing else; send_message
+//     (Task 4C-7) calls ChannelOutboundDispatcher.sendText(), never
+//     WhatsAppOutboundService/InstagramOutboundService/Prisma directly,
+//     and never accepts a channel, recipient id, or conversation id in its
+//     input schema — the dispatcher resolves channel/recipient from the
+//     persisted Conversation, and both clinicId and conversationId come
+//     only from the trusted AIContext the tool handler receives, never
+//     from the model's own arguments (Task 4C-9 — see
+//     tools/send-message.tool.ts); search_clinic_knowledge (Task 4C-10)
+//     calls ClinicKnowledgeService.search(), read-only, never accepts a
+//     clinicId in its input schema — every query is scoped by
+//     context.clinicId, so the model cannot select or leak another
+//     clinic's knowledge (see tools/search-clinic-knowledge.tool.ts).
 //   - ToolRegistry.dispatch() (tool.types.ts) rejects any tool name it
 //     does not recognize and Zod-validates every argument before a handler
 //     runs, regardless of what the model claims about its own output.
@@ -47,26 +68,55 @@ import { createCheckAvailabilityTool } from './tools/check-availability.tool';
 // use, never in its constructor — binding it here does not call Gemini or
 // touch the network at module-init/app-bootstrap time, so it is safe for
 // AppModule to import this module (see app.module.ts).
+//
+// Task 4C-8 adds AiContextService/InboundAiService — the trusted bridge
+// from a persisted inbound Message to this module's own
+// AiOrchestratorService (see inbound-ai.service.ts). MessagingModule is
+// imported for MessageService (context assembly's conversation-history
+// read); this module never touches Prisma directly.
+//
+// Module-graph note (Task 4C-8): WhatsAppModule/InstagramModule's webhook
+// controllers need InboundAiService to trigger AI after ingesting a
+// message, so they import AiModule — but AiModule already (transitively,
+// via ChannelOutboundModule) imports WhatsAppModule/InstagramModule for
+// send_message's outbound adapters (Task 4C-7). That is a genuine module
+// cycle, not accidental: inbound triggers AI, and AI's only outbound path
+// runs back through the same channel modules. `forwardRef()` is NestJS's
+// documented, supported mechanism for exactly this shape of mutual
+// dependency (see whatsapp.module.ts/instagram.module.ts/
+// channel-outbound.module.ts for the matching forwardRef() on the other
+// ends of this cycle) — used here rather than splitting each channel
+// module into separate inbound/outbound sub-modules, which would be a
+// larger structural change than this task's scope. Worth revisiting if a
+// third channel (Messenger) makes this cycle harder to reason about.
 // ============================================================================
 
 @Module({
-  imports: [AppointmentModule],
+  imports: [AppointmentModule, forwardRef(() => ChannelOutboundModule), MessagingModule, KnowledgeModule],
   providers: [
     {
       provide: ToolRegistry,
-      useFactory: (appointmentService: AppointmentService) => {
+      useFactory: (
+        appointmentService: AppointmentService,
+        dispatcher: ChannelOutboundDispatcher,
+        knowledgeService: ClinicKnowledgeService,
+      ) => {
         const registry = new ToolRegistry();
         registry.register(createCheckAvailabilityTool(appointmentService));
+        registry.register(createSendMessageTool(dispatcher));
+        registry.register(createSearchClinicKnowledgeTool(knowledgeService));
         return registry;
       },
-      inject: [AppointmentService],
+      inject: [AppointmentService, ChannelOutboundDispatcher, ClinicKnowledgeService],
     },
     {
       provide: AI_PROVIDER,
       useFactory: () => new GeminiAIProvider(config.GEMINI_API_KEY, config.GEMINI_MODEL),
     },
     AiOrchestratorService,
+    AiContextService,
+    InboundAiService,
   ],
-  exports: [AiOrchestratorService, ToolRegistry],
+  exports: [AiOrchestratorService, ToolRegistry, InboundAiService],
 })
 export class AiModule {}

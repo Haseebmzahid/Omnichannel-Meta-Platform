@@ -1,6 +1,7 @@
 import { Controller, Get, HttpCode, HttpStatus, Post, Query, Req } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
+import { InboundAiService } from '../../ai/inbound-ai.service';
 import { logger } from '../../logging/logger';
 import { MessageService } from '../../messaging/message.service';
 import { WhatsAppAccountResolverService } from './whatsapp-account-resolver.service';
@@ -22,6 +23,7 @@ export class WhatsAppWebhookController {
     private readonly signature: WhatsAppSignatureService,
     private readonly accountResolver: WhatsAppAccountResolverService,
     private readonly messageService: MessageService,
+    private readonly inboundAiService: InboundAiService,
   ) {}
 
   // GET webhook verification (docs/meta/whatsapp-cloud-api.md "Webhooks
@@ -72,7 +74,13 @@ export class WhatsAppWebhookController {
       }
 
       for (const message of normalizeWhatsAppInboundMessages(value, clinicId)) {
-        await this.messageService.ingestInboundMessage(message);
+        // Task 4C-8: persist first (the durable source of truth), then —
+        // and only then — trigger the one channel-neutral AI processing
+        // path. InboundAiService itself decides whether this delivery is
+        // new vs a duplicate, and never throws, so a failed/duplicate AI
+        // turn never affects this webhook's 200 acknowledgment below.
+        const ingestResult = await this.messageService.ingestInboundMessage(message);
+        await this.inboundAiService.processInboundMessage(ingestResult);
       }
 
       for (const update of normalizeWhatsAppStatuses(value, phoneNumberId)) {

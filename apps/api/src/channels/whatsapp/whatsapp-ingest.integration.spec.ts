@@ -2,7 +2,8 @@ import { createHmac, randomUUID } from 'node:crypto';
 import 'reflect-metadata';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { InboundAiService } from '../../ai/inbound-ai.service';
 import type { Clinic } from '../../generated/prisma/client';
 import { ChannelKey } from '../../generated/prisma/enums';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -80,11 +81,18 @@ describe('WhatsApp inbound webhook -> Messaging Core (integration)', () => {
     await prisma.$connect();
     clinic = await prisma.clinic.create({ data: { name: 'WhatsApp Integration Test Clinic', timezone: 'UTC' } });
 
+    // This file proves the inbound -> Messaging Core flow; AI triggering
+    // (Task 4C-8) is proven separately in inbound-ai.service.spec.ts and
+    // ai/tools/send-message.tool.integration.spec.ts — a no-op fake here
+    // keeps that concern out of this file's assertions.
+    const inboundAiService = { processInboundMessage: vi.fn().mockResolvedValue(null) } as unknown as InboundAiService;
+
     controller = new WhatsAppWebhookController(
       new WhatsAppWebhookVerificationService('unused-in-this-test'),
       new WhatsAppSignatureService(APP_SECRET),
       new WhatsAppAccountResolverService(PHONE_NUMBER_ID, clinic.id),
       messageService,
+      inboundAiService,
     );
   });
 

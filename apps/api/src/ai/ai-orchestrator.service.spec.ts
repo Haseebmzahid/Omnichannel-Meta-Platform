@@ -6,6 +6,7 @@ import { AiOrchestratorService } from './ai-orchestrator.service';
 import type { AIProvider, AIProviderRequest, AIProviderResponse } from './ai-provider.interface';
 import { ToolRegistry } from './tool.types';
 import { createCheckAvailabilityTool } from './tools/check-availability.tool';
+import { createSearchClinicKnowledgeTool } from './tools/search-clinic-knowledge.tool';
 
 // A fake AIProvider: pure in-memory, scripted responses, no network I/O of
 // any kind — this is what "AI provider abstraction can be mocked without
@@ -94,6 +95,27 @@ describe('AiOrchestratorService', () => {
     const toolMessage = secondTurnMessages.at(-1);
     expect(toolMessage?.role).toBe('tool');
     expect(JSON.parse(toolMessage?.content ?? '{}')).toMatchObject({ success: true });
+  });
+
+  it('11. search_clinic_knowledge dispatches through the same orchestration loop, scoped by trusted context', async () => {
+    const search = vi.fn().mockResolvedValue({ found: true, results: [{ category: 'HOURS', title: 'Hours', body: 'Mon-Sat 9-6.' }] });
+
+    const registry = new ToolRegistry();
+    registry.register(createSearchClinicKnowledgeTool({ search }));
+
+    const provider = new FakeAIProvider([
+      { toolCalls: [{ id: 'call-1', name: 'search_clinic_knowledge', arguments: { query: 'what are your hours' } }] },
+      { text: 'We are open Monday to Saturday, 9am to 6pm.' },
+    ]);
+    const orchestrator = new AiOrchestratorService(provider, registry);
+
+    const response = await orchestrator.handle({ context: fakeContext, message: 'what are your hours?' });
+
+    // Dispatched with clinicId from the trusted context, never from the
+    // model's own tool-call arguments (there is no clinicId in `arguments`
+    // above at all).
+    expect(search).toHaveBeenCalledWith({ clinicId: fakeContext.clinicId, query: 'what are your hours' });
+    expect(response.text).toBe('We are open Monday to Saturday, 9am to 6pm.');
   });
 
   it('7. the AI provider abstraction can be exercised with a fake — no network access involved', async () => {

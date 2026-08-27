@@ -14,6 +14,11 @@ describe('loadConfig', () => {
       WHATSAPP_PHONE_NUMBER_ID: '1234567890',
       WHATSAPP_CLINIC_ID: 'clinic-1',
       WHATSAPP_ACCESS_TOKEN: 'access-token',
+      INSTAGRAM_VERIFY_TOKEN: 'ig-verify-token',
+      INSTAGRAM_APP_SECRET: 'ig-app-secret',
+      INSTAGRAM_ACCOUNT_ID: 'ig-account-1',
+      INSTAGRAM_CLINIC_ID: 'clinic-1',
+      INSTAGRAM_ACCESS_TOKEN: 'ig-access-token',
     });
     expect(config).toEqual({
       NODE_ENV: 'production',
@@ -28,6 +33,12 @@ describe('loadConfig', () => {
       WHATSAPP_CLINIC_ID: 'clinic-1',
       WHATSAPP_ACCESS_TOKEN: 'access-token',
       WHATSAPP_API_VERSION: 'v26.0',
+      INSTAGRAM_VERIFY_TOKEN: 'ig-verify-token',
+      INSTAGRAM_APP_SECRET: 'ig-app-secret',
+      INSTAGRAM_ACCOUNT_ID: 'ig-account-1',
+      INSTAGRAM_CLINIC_ID: 'clinic-1',
+      INSTAGRAM_ACCESS_TOKEN: 'ig-access-token',
+      INSTAGRAM_API_VERSION: 'v26.0',
     });
   });
 
@@ -40,6 +51,7 @@ describe('loadConfig', () => {
       DATABASE_URL: 'postgresql://clinic:clinic_dev_password@localhost:5432/clinic_dev',
       GEMINI_MODEL: 'gemini-3.7-flash',
       WHATSAPP_API_VERSION: 'v26.0',
+      INSTAGRAM_API_VERSION: 'v26.0',
     });
   });
 
@@ -61,6 +73,11 @@ describe('loadConfig', () => {
       WHATSAPP_PHONE_NUMBER_ID: '1234567890',
       WHATSAPP_CLINIC_ID: 'clinic-1',
       WHATSAPP_ACCESS_TOKEN: 'access-token',
+      INSTAGRAM_VERIFY_TOKEN: 'ig-verify-token',
+      INSTAGRAM_APP_SECRET: 'ig-app-secret',
+      INSTAGRAM_ACCOUNT_ID: 'ig-account-1',
+      INSTAGRAM_CLINIC_ID: 'clinic-1',
+      INSTAGRAM_ACCESS_TOKEN: 'ig-access-token',
     });
     expect(config.GEMINI_API_KEY).toBe('sk-real-key');
   });
@@ -90,6 +107,11 @@ describe('loadConfig', () => {
       WHATSAPP_PHONE_NUMBER_ID: '1234567890',
       WHATSAPP_CLINIC_ID: 'clinic-1',
       WHATSAPP_ACCESS_TOKEN: 'access-token',
+      INSTAGRAM_VERIFY_TOKEN: 'ig-verify-token',
+      INSTAGRAM_APP_SECRET: 'ig-app-secret',
+      INSTAGRAM_ACCOUNT_ID: 'ig-account-1',
+      INSTAGRAM_CLINIC_ID: 'clinic-1',
+      INSTAGRAM_ACCESS_TOKEN: 'ig-access-token',
     });
     expect(config.WHATSAPP_PHONE_NUMBER_ID).toBe('1234567890');
   });
@@ -110,6 +132,66 @@ describe('loadConfig', () => {
   it('defaults WHATSAPP_API_VERSION and allows overriding it', () => {
     expect(loadConfig({}).WHATSAPP_API_VERSION).toBe('v26.0');
     expect(loadConfig({ WHATSAPP_API_VERSION: 'v27.0' }).WHATSAPP_API_VERSION).toBe('v27.0');
+  });
+
+  it('boots in development/test without Instagram env vars', () => {
+    expect(() => loadConfig({ NODE_ENV: 'development' })).not.toThrow();
+    expect(() => loadConfig({ NODE_ENV: 'test' })).not.toThrow();
+  });
+
+  it('throws a clear error when NODE_ENV=production and Instagram config is missing', () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: 'production',
+        GEMINI_API_KEY: 'test-key',
+        WHATSAPP_VERIFY_TOKEN: 'verify-token',
+        WHATSAPP_APP_SECRET: 'app-secret',
+        WHATSAPP_PHONE_NUMBER_ID: '1234567890',
+        WHATSAPP_CLINIC_ID: 'clinic-1',
+        WHATSAPP_ACCESS_TOKEN: 'access-token',
+      }),
+    ).toThrow(/INSTAGRAM_VERIFY_TOKEN/);
+  });
+
+  it('accepts NODE_ENV=production when Instagram config is fully set', () => {
+    const config = loadConfig({
+      NODE_ENV: 'production',
+      GEMINI_API_KEY: 'test-key',
+      WHATSAPP_VERIFY_TOKEN: 'verify-token',
+      WHATSAPP_APP_SECRET: 'app-secret',
+      WHATSAPP_PHONE_NUMBER_ID: '1234567890',
+      WHATSAPP_CLINIC_ID: 'clinic-1',
+      WHATSAPP_ACCESS_TOKEN: 'access-token',
+      INSTAGRAM_VERIFY_TOKEN: 'ig-verify-token',
+      INSTAGRAM_APP_SECRET: 'ig-app-secret',
+      INSTAGRAM_ACCOUNT_ID: 'ig-account-1',
+      INSTAGRAM_CLINIC_ID: 'clinic-1',
+      INSTAGRAM_ACCESS_TOKEN: 'ig-access-token',
+    });
+    expect(config.INSTAGRAM_ACCOUNT_ID).toBe('ig-account-1');
+  });
+
+  it('throws a clear error when NODE_ENV=production and INSTAGRAM_ACCESS_TOKEN is missing', () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: 'production',
+        GEMINI_API_KEY: 'test-key',
+        WHATSAPP_VERIFY_TOKEN: 'verify-token',
+        WHATSAPP_APP_SECRET: 'app-secret',
+        WHATSAPP_PHONE_NUMBER_ID: '1234567890',
+        WHATSAPP_CLINIC_ID: 'clinic-1',
+        WHATSAPP_ACCESS_TOKEN: 'access-token',
+        INSTAGRAM_VERIFY_TOKEN: 'ig-verify-token',
+        INSTAGRAM_APP_SECRET: 'ig-app-secret',
+        INSTAGRAM_ACCOUNT_ID: 'ig-account-1',
+        INSTAGRAM_CLINIC_ID: 'clinic-1',
+      }),
+    ).toThrow(/INSTAGRAM_ACCESS_TOKEN/);
+  });
+
+  it('defaults INSTAGRAM_API_VERSION and allows overriding it', () => {
+    expect(loadConfig({}).INSTAGRAM_API_VERSION).toBe('v26.0');
+    expect(loadConfig({ INSTAGRAM_API_VERSION: 'v27.0' }).INSTAGRAM_API_VERSION).toBe('v27.0');
   });
 
   it('throws a clear error for an empty DATABASE_URL', () => {

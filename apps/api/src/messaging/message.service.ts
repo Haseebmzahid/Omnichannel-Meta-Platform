@@ -41,6 +41,24 @@ export interface GetConversationMessagesResult {
   nextCursor: string | null;
 }
 
+// Task 4C-8 — a second, deliberately distinct read pattern from
+// getConversationMessages() above: that method pages forward from the
+// *start* of a conversation (oldest-first, cursor-forward — built for the
+// inbox UI's infinite-scroll-from-the-beginning), which returns the wrong
+// slice for AI context assembly (the *most recent* N messages, not the
+// *first* N). This is not a second, competing message-history
+// implementation — it reuses the exact same clinic-scoped
+// existence/ownership check as getConversationMessages() and lives in the
+// same service, which already owns "retrieving conversation history"
+// (docs/architecture's Messaging Core responsibility list) — it is simply
+// the query shape a "recent N, chronological" caller needs, which the
+// paginated method cannot serve without loading the entire conversation.
+export interface GetRecentConversationMessagesInput {
+  clinicId: string;
+  conversationId: string;
+  limit?: number;
+}
+
 export interface ReconcileDeliveryStatusResult {
   /** null when no Message matches (channelAccountRef, externalMessageId) — a safe no-op, not an error. */
   message: MessageWithAttachments | null;
@@ -95,6 +113,12 @@ function shouldApplyDeliveryStatus(current: MessageDeliveryStatus, incoming: Mes
 // itself) — retried, not treated as fatal. See ingestInboundMessage.
 const MAX_INGEST_ATTEMPTS = 3;
 const DEFAULT_PAGE_SIZE = 50;
+// Conservative, deliberately smaller than the inbox's DEFAULT_PAGE_SIZE —
+// no architecture doc fixes an AI context history size, so this is a
+// smallest-sensible default (Task 4C-8), not a redesign of pagination.
+// Bounds prompt size and cost while still giving the model several recent
+// turns of back-and-forth.
+const DEFAULT_AI_HISTORY_LIMIT = 20;
 
 @Injectable()
 export class MessageService {
@@ -403,6 +427,32 @@ export class MessageService {
     const last = page[page.length - 1];
 
     return { messages: page, nextCursor: hasMore && last ? last.id : null };
+  }
+
+  // The most recent N messages of a conversation, in chronological
+  // (oldest-of-the-window-first) order — what AI context assembly needs
+  // (Task 4C-8), never what getConversationMessages() above returns for a
+  // conversation longer than the limit. Same clinic-scoped
+  // existence/ownership check as getConversationMessages(); queries
+  // newest-first with `take`, then reverses in memory, which is the
+  // standard "last N, chronological" pattern and still bounded (never
+  // loads the full conversation regardless of its length).
+  async getRecentConversationMessages(input: GetRecentConversationMessagesInput): Promise<MessageWithAttachments[]> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: input.conversationId, clinicId: input.clinicId },
+    });
+    if (!conversation) throw new ConversationNotFoundException(input.conversationId);
+
+    const limit = input.limit ?? DEFAULT_AI_HISTORY_LIMIT;
+
+    const messages = await this.prisma.message.findMany({
+      where: { conversationId: input.conversationId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      include: { attachments: true },
+    });
+
+    return messages.reverse();
   }
 
   private async findMessageByIdempotencyKey(

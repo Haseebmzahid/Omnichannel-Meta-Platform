@@ -4,6 +4,7 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { InboundAiService } from '../../ai/inbound-ai.service';
 import { MessageService } from '../../messaging/message.service';
 import { WhatsAppAccountResolverService } from './whatsapp-account-resolver.service';
 import { WhatsAppSignatureService } from './whatsapp-signature.service';
@@ -94,10 +95,15 @@ describe('WhatsAppWebhookController (HTTP)', () => {
   let app: INestApplication;
   let ingestInboundMessage: ReturnType<typeof vi.fn>;
   let reconcileOutboundDeliveryStatus: ReturnType<typeof vi.fn>;
+  let processInboundMessage: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     ingestInboundMessage = vi.fn().mockResolvedValue({ created: true });
     reconcileOutboundDeliveryStatus = vi.fn().mockResolvedValue({ message: null, applied: false });
+    // AI triggering itself (Task 4C-8) is proven in inbound-ai.service.spec.ts
+    // and the ai/tools/send-message.tool.integration.spec.ts full-stack test
+    // — this file only proves the controller calls it, not what it does.
+    processInboundMessage = vi.fn().mockResolvedValue(null);
 
     const moduleRef = await Test.createTestingModule({
       controllers: [WhatsAppWebhookController],
@@ -109,6 +115,7 @@ describe('WhatsAppWebhookController (HTTP)', () => {
           useValue: new WhatsAppAccountResolverService(PHONE_NUMBER_ID, CLINIC_ID),
         },
         { provide: MessageService, useValue: { ingestInboundMessage, reconcileOutboundDeliveryStatus } },
+        { provide: InboundAiService, useValue: { processInboundMessage } },
       ],
     }).compile();
 
@@ -160,9 +167,14 @@ describe('WhatsAppWebhookController (HTTP)', () => {
         text: 'hello',
       }),
     );
+    // Task 4C-8: AI processing is triggered immediately after — and only
+    // after — the inbound message is persisted, with exactly what
+    // ingestInboundMessage() resolved to.
+    expect(processInboundMessage).toHaveBeenCalledTimes(1);
+    expect(processInboundMessage).toHaveBeenCalledWith({ created: true });
   });
 
-  it('4. an invalid signature is rejected and never reaches MessageService', async () => {
+  it('4. an invalid signature is rejected and never reaches MessageService (or AI processing)', async () => {
     const body = JSON.stringify(textMessagePayload());
 
     const res = await request(app.getHttpServer())
@@ -173,6 +185,7 @@ describe('WhatsAppWebhookController (HTTP)', () => {
 
     expect(res.status).toBe(401);
     expect(ingestInboundMessage).not.toHaveBeenCalled();
+    expect(processInboundMessage).not.toHaveBeenCalled();
   });
 
   it('5. a request body modified after signing fails signature verification', async () => {

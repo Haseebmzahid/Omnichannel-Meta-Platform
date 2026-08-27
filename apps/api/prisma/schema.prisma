@@ -1,15 +1,15 @@
 // Prisma <-> PostgreSQL foundation (Task 4B) + core clinic/staff/patient
-// identity domain (Task 4C-1) + conversation/message domain (Task 4C-2).
+// identity domain (Task 4C-1) + conversation/message domain (Task 4C-2) +
+// appointment engine (Task 4C-5) + clinic knowledge base (Task 4C-10).
 //
 // Scope of the models below: Clinic, Staff, Doctor, Patient, Contact,
-// ChannelIdentity, Conversation, Message, Attachment — per
-// docs/architecture/01-domain-model.md and
-// docs/architecture/03-conversation-and-inbox.md (the three-tier identity
+// ChannelIdentity, Conversation, Message, Attachment, Appointment,
+// DoctorSchedule, KnowledgeDocument — per docs/architecture/01-domain-model.md
+// and docs/architecture/03-conversation-and-inbox.md (the three-tier identity
 // model, the per-channel conversation model, the window tracker, the
-// human-handoff state machine). Appointment, KnowledgeDocument,
-// AIConversationState, ToolExecution, HumanAssignment, AuditLog are named in
-// those docs' entity map but are deliberately NOT modeled here — they
-// belong to later, separate tasks.
+// human-handoff state machine). AIConversationState, ToolExecution,
+// HumanAssignment, AuditLog are still named in those docs' entity map but are
+// deliberately NOT modeled here — they belong to later, separate tasks.
 //
 // Naming: Prisma model fields use camelCase (idiomatic for the generated TS
 // client) with no @map/@@map — the architecture docs write fields in
@@ -115,11 +115,12 @@ model Clinic {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  staff         Staff[]
-  doctors       Doctor[]
-  patients      Patient[]
-  conversations Conversation[]
-  appointments  Appointment[]
+  staff              Staff[]
+  doctors            Doctor[]
+  patients           Patient[]
+  conversations      Conversation[]
+  appointments       Appointment[]
+  knowledgeDocuments KnowledgeDocument[]
 
   @@map("clinics")
 }
@@ -610,6 +611,57 @@ model DoctorSchedule {
   @@index([doctorId, dayOfWeek])
   @@index([doctorId, specificDate])
   @@map("doctor_schedules")
+}
+
+// Task 4C-10. docs/architecture/01-domain-model.md's KnowledgeDocument field
+// list, transcribed directly: "id, clinic_id, category (clinic_info|doctor|
+// service|fee|hours|location|policy|faq), title, body, tags[], is_active,
+// updated_by, updated_at." This model was intentionally deferred at Task
+// 4C-1 (see this file's header comment) pending the task that actually
+// builds search_clinic_knowledge() — this is that task. Named exactly as
+// the doc's entity map names it ("Clinic ──< KnowledgeDocument"), so
+// search_clinic_knowledge() reads real, staff-owned rows rather than
+// inventing a substitute knowledge source (see docs/architecture/
+// 04-ai-orchestration.md §5 / ADR-009 "grounded answers only").
+enum KnowledgeCategory {
+  CLINIC_INFO
+  DOCTOR
+  SERVICE
+  FEE
+  HOURS
+  LOCATION
+  POLICY
+  FAQ
+}
+
+model KnowledgeDocument {
+  id       String @id @default(uuid()) @db.Uuid
+  clinicId String @db.Uuid
+  clinic   Clinic @relation(fields: [clinicId], references: [id])
+
+  category KnowledgeCategory
+  title    String
+  body     String
+  tags     String[]
+
+  // Doc: "is_active". A document is excluded from search_clinic_knowledge()
+  // results once staff mark it inactive, without deleting the row (keeps
+  // edit history intact — same soft-disable pattern as Doctor.active).
+  isActive Boolean @default(true)
+
+  // Doc: "updated_by". Nullable Staff id, not a foreign key — the doc does
+  // not describe a DB-enforced relation here (unlike Message.senderStaffId,
+  // which is a real FK), and no staff-authoring portal exists yet (Task
+  // 4C-10 is read-only; write access is a future, separate task) to make
+  // one meaningful today.
+  updatedBy String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clinicId, category])
+  @@index([clinicId, isActive])
+  @@map("knowledge_documents")
 }
 
 // docs/architecture/01-domain-model.md's Appointment field list, transcribed
