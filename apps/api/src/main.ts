@@ -7,7 +7,12 @@ import { logger } from './logging/logger';
 import { NestPinoLogger } from './logging/nest-logger.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { logger: new NestPinoLogger() });
+  // rawBody: true exposes req.rawBody (Buffer) alongside normal JSON
+  // parsing for every route — needed only by the WhatsApp webhook
+  // controller's signature verification (docs/architecture/02-channel-
+  // adapters.md, "operate on the raw request body"), without disabling or
+  // duplicating body parsing anywhere else.
+  const app = await NestFactory.create(AppModule, { logger: new NestPinoLogger(), rawBody: true });
   app.useGlobalFilters(new GlobalExceptionFilter());
 
   await app.listen(config.PORT);

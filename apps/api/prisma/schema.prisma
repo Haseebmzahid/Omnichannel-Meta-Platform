@@ -448,6 +448,18 @@ model Message {
   replyTo   Message?  @relation("MessageReplyTo", fields: [replyToId], references: [id])
   replies   Message[] @relation("MessageReplyTo")
 
+  // Caller-supplied idempotency key for OUTBOUND writes (WhatsApp outbound
+  // slice). Mirrors Appointment.idempotencyKey's exact pattern (nullable +
+  // unique; multiple NULLs allowed under Postgres unique-index semantics) —
+  // reusing the one idempotency-key design this codebase already has,
+  // rather than inventing a second one. This is a *different* idempotency
+  // boundary than externalId's below: externalId is Meta's own id and is
+  // only known once a send has already succeeded, so it cannot dedupe the
+  // send *attempt* itself (the classic chicken-and-egg for outbound
+  // writes) — idempotencyKey is what a retried application-level send
+  // operation checks before ever calling Meta.
+  idempotencyKey String? @unique
+
   // Meta message id — the idempotency key. Nullable: an outbound message
   // row can exist before it has actually been sent (and therefore before
   // Meta has assigned it an id). Never the primary key — see this task's
