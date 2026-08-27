@@ -57,14 +57,66 @@ display_name_at_channel, link_state (`unlinked`|`linked`), link_method (`verifie
 **Unique constraint**: `(channel_key, channel_account_ref, external_id)`.
 
 ### Conversation
-Belongs to exactly one channel. Fields: id, channel_key, channel_account_ref, external_thread_key (`wa_id` |
-PSID | IGSID), contact_id (FK), patient_id (FK, nullable, denormalized from contact for query speed), status
-(`open`|`pending_human`|`snoozed`|`resolved`|`archived`), mode (`AI`|`HUMAN`|`PAUSED`|`SUSPENDED`),
-assigned_staff_id (nullable), window_expires_at, window_type, extension_expires_at (Human Agent window, where
-applicable), ai_state (see `AIConversationState`), unread_count, last_message_at, last_patient_message_at,
-first_response_at, resolved_at, labels[], internal_notes[], created_at, updated_at.
+Belongs to exactly one channel. Fields: id, clinic_id (denormalized — see "Clinic ownership" below), channel_key,
+channel_account_ref, external_thread_key (`wa_id` | PSID | IGSID), contact_id (FK), patient_id (FK, nullable,
+denormalized from contact for query speed), status (`open`|`snoozed`|`resolved`|`archived` — see "`status` vs
+`mode`" below; `pending_human` is retired, not a valid value), mode
+(`AI`|`PENDING`|`HUMAN`|`PAUSED`|`SUSPENDED` — the human-handoff state machine defined in full in
+[03-conversation-and-inbox.md](03-conversation-and-inbox.md) §5, which is authoritative for this field's value
+set and transitions), assigned_staff_id (nullable), window_expires_at, window_type, extension_expires_at (Human
+Agent window, where applicable), ai_state (see `AIConversationState`), unread_count, last_message_at,
+last_patient_message_at, first_response_at, resolved_at, labels[], internal_notes[], created_at, updated_at.
 **Unique constraint**: `(channel_key, channel_account_ref, external_thread_key)` — see
 [ADR-003](../adr/ADR-003-conversation-model.md) for why conversations are never merged across channels.
+
+**Clinic ownership.** `clinic_id` is a direct field on `Conversation`, not merely reachable via
+`contact_id -> patient_id -> clinic_id`. It has to be: `patient_id` is nullable — a conversation may belong to an
+unresolved external contact with no patient link yet (§4 below) — and neither `Contact` nor `ChannelIdentity`
+carry a `clinic_id` of their own. Without a direct field, an unresolved conversation would have no clinic
+association at all, which breaks clinic-scoped inbox queries for exactly the case (a brand-new, not-yet-linked
+contact) where they matter most. Denormalized here for the same reason `patient_id` already is — implemented as
+part of Task 4C-2, documented here after the fact.
+
+**No direct `ChannelIdentity` foreign key.** `Conversation` does not reference a specific `ChannelIdentity` row.
+It carries the same channel/account/thread identifiers `ChannelIdentity` does — `channel_key`,
+`channel_account_ref`, `external_thread_key` (`ChannelIdentity`'s equivalent field is `external_id`) — directly
+on itself, rather than a foreign key to it. A `Contact` can hold several `ChannelIdentity` rows, one per channel;
+which one "belongs to" a given conversation is always whichever row's `(channel_key, channel_account_ref,
+external_id)` matches the conversation's own triple. That match is not currently enforced as a database
+constraint. This is the current, intentional scope, not an oversight — but nothing in the schema stops a
+conversation's channel identifiers from silently diverging from a `ChannelIdentity` row's if application code
+ever assigns them inconsistently. Revisit if that turns out to matter in practice.
+
+**`status` vs `mode` — resolved.** These are two different dimensions, not two names for the same thing, and the
+previously-flagged overlap between them is now decided:
+
+- **`status`** is the conversation's position in the staff inbox *workflow*: `open` (active), `snoozed` (staff
+  deferred it), `resolved` (closed out), `archived` (aged out of the working set). It answers "where does this
+  sit in the queue."
+- **`mode`** is who currently owns responding — the human-handoff state machine in
+  [03-conversation-and-inbox.md](03-conversation-and-inbox.md) §5 (`AI`/`PENDING`/`HUMAN`/`PAUSED`/`SUSPENDED`).
+  It answers "who replies next."
+
+**Decision: `status = pending_human` is retired and is not a valid `status` value.** A conversation waiting on a
+human is expressed entirely through `mode = PENDING`; `status` does not need, and must not carry, a parallel
+"waiting on human" value of its own. A conversation can be `mode = PENDING` while sitting at any `status` value
+that makes inbox-workflow sense — in practice this is `status = open` (still an active, working conversation) or
+`status = snoozed`, never `resolved`/`archived` (a resolved/archived conversation should not be actively
+awaiting a human reply; if a genuinely resolved conversation somehow re-escalates, `status` moves back to `open`
+first).
+
+**Canonical examples:**
+
+| Situation | `status` | `mode` |
+|---|---|---|
+| AI is handling the conversation normally | `open` | `AI` |
+| Escalated, waiting for a human to take over | `open` | `PENDING` |
+| A staff member has taken over | `open` | `HUMAN` |
+| Conversation resolved, closed by staff | `resolved` | `HUMAN` |
+
+**Schema note:** `PENDING_HUMAN` has been dropped from the Prisma schema's `ConversationStatus` enum (Task
+4C-3A, migration `remove_pending_human_status`), bringing the schema in line with the decision above. No data
+migration was required — no row used the value before it was removed.
 
 ### Message
 Fields: id, conversation_id, channel_key (denormalized), direction (`inbound`|`outbound`), sender_type

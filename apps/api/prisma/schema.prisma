@@ -1,0 +1,697 @@
+// Prisma <-> PostgreSQL foundation (Task 4B) + core clinic/staff/patient
+// identity domain (Task 4C-1) + conversation/message domain (Task 4C-2).
+//
+// Scope of the models below: Clinic, Staff, Doctor, Patient, Contact,
+// ChannelIdentity, Conversation, Message, Attachment — per
+// docs/architecture/01-domain-model.md and
+// docs/architecture/03-conversation-and-inbox.md (the three-tier identity
+// model, the per-channel conversation model, the window tracker, the
+// human-handoff state machine). Appointment, KnowledgeDocument,
+// AIConversationState, ToolExecution, HumanAssignment, AuditLog are named in
+// those docs' entity map but are deliberately NOT modeled here — they
+// belong to later, separate tasks.
+//
+// Naming: Prisma model fields use camelCase (idiomatic for the generated TS
+// client) with no @map/@@map — the architecture docs write fields in
+// snake_case prose, read here as descriptive rather than a physical-naming
+// mandate; Postgres is fine with camelCase identifiers since Prisma always
+// quotes them.
+//
+// Identifier strategy: UUID primary keys. The architecture docs do not
+// explicitly mandate an ID type for these entities — this is a conservative,
+// standard default for identifiers that are safe to expose over an API
+// (no sequence/enumeration leakage), consistent with this task's own
+// "appropriate for public/API references" guidance. Flagged as an
+// assumption, not a documented requirement, in the task report.
+//
+// Connection URL is not set here; it comes from prisma.config.ts (CLI) and
+// from validated application config (NestJS runtime) — see apps/api/src/prisma.
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+// --- Enums -------------------------------------------------------------
+
+// docs/architecture/01-domain-model.md: "Role: Admin | Manager | Agent |
+// ReadOnly (fixed enum in v1)" — modeled as a Prisma enum, not a separate
+// Role table, since the doc explicitly calls it a fixed enum.
+enum StaffRole {
+  ADMIN
+  MANAGER
+  AGENT
+  READ_ONLY
+}
+
+// Doc: "status (active/disabled)". Modeled as an enum rather than a bare
+// boolean for consistency with every other status field in the documented
+// domain model (Conversation.status, Appointment.status, ...).
+enum StaffStatus {
+  ACTIVE
+  DISABLED
+}
+
+// One enum, one ChannelIdentity table for all three channels — never a
+// per-channel table or per-channel columns. See
+// docs/architecture/02-channel-adapters.md's boundary rule and this task's
+// "generic channel + external identity representation" instruction.
+enum ChannelKey {
+  WHATSAPP
+  INSTAGRAM
+  MESSENGER
+}
+
+enum ChannelLinkState {
+  UNLINKED
+  LINKED
+}
+
+enum ChannelLinkMethod {
+  VERIFIED_PHONE
+  APPOINTMENT_REF
+  STAFF_CONFIRMED
+  OTP
+}
+
+// ASSUMPTION: docs/architecture/03-conversation-and-inbox.md §4's linking
+// rules table only ever describes two outcomes for automatic evidence —
+// "automatic link, high confidence" or "requires explicit patient
+// confirmation" — never a numeric score. ADR-004 explicitly rejects
+// probabilistic confidence-score-based linking as an alternative. Modeled
+// as this two-value enum rather than a float for that reason. The doc
+// names a "link_confidence" field without enumerating its exact value set,
+// so this specific enum is this task's conservative reading, not a literal
+// transcription — flagged in the task report.
+enum ChannelLinkConfidence {
+  HIGH
+  PENDING
+}
+
+// --- Core clinic / staff / provider -------------------------------------
+
+model Clinic {
+  id       String @id @default(uuid()) @db.Uuid
+  name     String
+  timezone String
+
+  // Address/operating hours have no documented structure in the
+  // architecture (no fixed day/time schema is specified anywhere); kept as
+  // simple, optional fields rather than inventing one. The knowledge-base /
+  // clinic-info tool (a later task) is the documented source of truth for
+  // structured, patient-facing clinic content — these are not that.
+  address String?
+  hours   Json?
+
+  // "Consultation fee defaults" per the architecture doc; Doctor.consultationFee
+  // takes precedence over this when set.
+  defaultConsultationFee Decimal? @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff         Staff[]
+  doctors       Doctor[]
+  patients      Patient[]
+  conversations Conversation[]
+  appointments  Appointment[]
+
+  @@map("clinics")
+}
+
+model Staff {
+  id       String @id @default(uuid()) @db.Uuid
+  clinicId String @db.Uuid
+  clinic   Clinic @relation(fields: [clinicId], references: [id])
+
+  name         String
+  email        String
+  passwordHash String
+  mfaSecret    String?
+  role         StaffRole
+  status       StaffStatus @default(ACTIVE)
+  lastLoginAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  linkedChannelIdentities ChannelIdentity[] @relation("ChannelIdentityLinkedBy")
+  assignedConversations   Conversation[]    @relation("ConversationAssignedStaff")
+  sentMessages            Message[]         @relation("MessageSenderStaff")
+
+  // Clinic-scoped uniqueness (not global) — keeps future multi-clinic
+  // isolation possible without a schema change, per this task's
+  // "do not design the schema in a way that makes future clinic isolation
+  // impossible" instruction, even though only one clinic operates today.
+  @@unique([clinicId, email])
+  @@index([clinicId])
+  @@map("staff")
+}
+
+model Doctor {
+  id       String @id @default(uuid()) @db.Uuid
+  clinicId String @db.Uuid
+  clinic   Clinic @relation(fields: [clinicId], references: [id])
+
+  name            String
+  specialty       String?
+  bio             String?
+  consultationFee Decimal? @db.Decimal(10, 2)
+  active          Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  schedules    DoctorSchedule[]
+  appointments Appointment[]
+
+  @@index([clinicId])
+  @@map("doctors")
+}
+
+// --- Patient identity (three-tier model) --------------------------------
+
+// The clinical/CRM subject — deliberately never keyed on a channel
+// identifier. See docs/architecture/01-domain-model.md design rule 1 and
+// ADR-004.
+model Patient {
+  id       String @id @default(uuid()) @db.Uuid
+  clinicId String @db.Uuid
+  clinic   Clinic @relation(fields: [clinicId], references: [id])
+
+  displayName   String
+  verifiedPhone String?
+  verifiedEmail String?
+  dob           DateTime? @db.Date
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts      Contact[]
+  conversations Conversation[]
+  appointments  Appointment[]
+
+  @@index([clinicId])
+  // Supports the "patient by phone/contact" lookup pattern. Deliberately
+  // NOT unique — ADR-004's own adversarial test cases (e.g. a shared family
+  // phone) assume a phone number is not guaranteed to identify exactly one
+  // patient; uniqueness is an identity-linking decision, not a DB
+  // constraint (see ChannelIdentity below for the constraint that IS
+  // architecturally mandated).
+  @@index([verifiedPhone])
+  @@map("patients")
+}
+
+// A person as known through messaging — the bridge between a raw channel
+// identity and an (optional) Patient. Can exist before being linked to a
+// Patient at all.
+model Contact {
+  id        String   @id @default(uuid()) @db.Uuid
+  patientId String?  @db.Uuid
+  patient   Patient? @relation(fields: [patientId], references: [id])
+
+  displayName String?
+  firstSeenAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  channelIdentities ChannelIdentity[]
+  conversations     Conversation[]
+
+  @@index([patientId])
+  @@map("contacts")
+}
+
+// One row per (channel, external id) pair a Contact has been seen under —
+// one table for WhatsApp/Instagram/Messenger via the ChannelKey enum, never
+// three per-channel tables or per-channel columns.
+model ChannelIdentity {
+  id        String  @id @default(uuid()) @db.Uuid
+  contactId String  @db.Uuid
+  contact   Contact @relation(fields: [contactId], references: [id])
+
+  channelKey           ChannelKey
+  channelAccountRef    String
+  // wa_id | PSID | IGSID — namespaced per channel, never comparable across
+  // channels. Not the primary key: this is an external Meta identifier, and
+  // this task's instructions explicitly forbid using external Meta IDs as
+  // internal primary keys.
+  externalId           String
+  displayNameAtChannel String?
+
+  linkState       ChannelLinkState       @default(UNLINKED)
+  linkMethod      ChannelLinkMethod?
+  linkConfidence  ChannelLinkConfidence?
+  linkedByStaffId String?                @db.Uuid
+  linkedByStaff   Staff?                 @relation("ChannelIdentityLinkedBy", fields: [linkedByStaffId], references: [id])
+  linkedAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // The architecturally load-bearing constraint: the same external channel
+  // identity can never be attached to more than one Contact/Patient, at the
+  // database level, not just in application logic. Exact constraint per
+  // docs/architecture/01-domain-model.md's ChannelIdentity section.
+  @@unique([channelKey, channelAccountRef, externalId])
+  @@index([contactId])
+  @@map("channel_identities")
+}
+
+// ============================================================================
+// Conversation + message domain (Task 4C-2)
+//
+// Scope: Conversation, Message, Attachment only, per
+// docs/architecture/01-domain-model.md §2 (Conversation/Message/Attachment)
+// and docs/architecture/03-conversation-and-inbox.md (per-channel
+// conversations, unified inbox as a query not a merge, the window tracker,
+// the human-handoff state machine). AIConversationState, ToolExecution,
+// HumanAssignment, AuditLog, Appointment are named in the docs' entity map
+// but are NOT modeled here — separate tasks, per this task's explicit
+// exclusion list.
+// ============================================================================
+
+// docs/architecture/01-domain-model.md's Conversation section ("`status` vs
+// `mode` — resolved"): status is the inbox-workflow lifecycle only —
+// `open`|`snoozed`|`resolved`|`archived`. `PENDING_HUMAN` is retired: waiting
+// for a human is expressed exclusively as `status = OPEN, mode = PENDING`
+// (see ConversationMode below), never as a status value of its own.
+enum ConversationStatus {
+  OPEN
+  SNOOZED
+  RESOLVED
+  ARCHIVED
+}
+
+// AMBIGUITY (reported, resolved conservatively — see task report):
+// 01-domain-model.md's Conversation field list gives this 4 values (`AI`|
+// `HUMAN`|`PAUSED`|`SUSPENDED`), but 03-conversation-and-inbox.md §5 is
+// entirely dedicated to this exact state machine and explicitly documents a
+// 5th state, `PENDING` ("Human requested, not yet claimed; AI silent except
+// one acknowledgement; SLA timer running"), with a full transitions table.
+// Treated the dedicated section as authoritative over the terser summary
+// list and included PENDING — omitting a state that's explicitly defined
+// elsewhere, with its own transition semantics, would be the more
+// dangerous reading, not the more conservative one.
+enum ConversationMode {
+  AI
+  PENDING
+  HUMAN
+  PAUSED
+  SUSPENDED
+}
+
+// One generic Conversation model for all three channels — never
+// WhatsAppConversation/InstagramConversation/MessengerConversation. Channel
+// identity is carried entirely through the existing ChannelKey enum plus
+// plain reference/thread-key columns, exactly as ChannelIdentity already
+// does — not a new abstraction.
+model Conversation {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Not in 01-domain-model.md's terse Conversation field list, which only
+  // names contact_id/patient_id as identity relations. Added because this
+  // task explicitly requires "Conversations must be correctly associated
+  // with the clinic" AND explicitly requires unresolved-contact
+  // conversations to remain possible (Contact.patientId is nullable) — under
+  // the documented field list alone, an unresolved conversation would have
+  // NO clinic association at all, since Contact and ChannelIdentity (Task
+  // 4C-1) don't carry clinicId either. Denormalized here for the same
+  // reason patientId already is ("for query speed"/to keep clinic scoping
+  // possible), not a new relation pattern. See task report.
+  clinicId String @db.Uuid
+  clinic   Clinic @relation(fields: [clinicId], references: [id])
+
+  contactId String  @db.Uuid
+  contact   Contact @relation(fields: [contactId], references: [id])
+
+  // Denormalized from contact for query speed, and nullable — a
+  // conversation may belong to an unresolved external contact and only
+  // later gain a patient after identity resolution. Never required at
+  // message-ingestion time.
+  patientId String?  @db.Uuid
+  patient   Patient? @relation(fields: [patientId], references: [id])
+
+  channelKey        ChannelKey
+  channelAccountRef String
+  // wa_id | PSID | IGSID for this thread. Not a FK to ChannelIdentity — see
+  // task report on why this task did not add one.
+  externalThreadKey String
+
+  status ConversationStatus @default(OPEN)
+  mode   ConversationMode   @default(AI)
+
+  assignedStaffId String? @db.Uuid
+  assignedStaff   Staff?  @relation("ConversationAssignedStaff", fields: [assignedStaffId], references: [id])
+
+  // Messaging-window tracker (docs/architecture/03-conversation-and-inbox.md
+  // §3) — first-class fields, not derived ad hoc at send time.
+  windowExpiresAt    DateTime?
+  windowType         String?
+  extensionExpiresAt DateTime?
+
+  unreadCount          Int       @default(0)
+  lastMessageAt        DateTime?
+  lastPatientMessageAt DateTime?
+  firstResponseAt      DateTime?
+  resolvedAt           DateTime?
+
+  labels        String[]
+  internalNotes String[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages     Message[]
+  appointments Appointment[]
+
+  // Conversations are per-channel by construction, never merged — the
+  // exact constraint from docs/architecture/01-domain-model.md /
+  // ADR-003.
+  @@unique([channelKey, channelAccountRef, externalThreadKey])
+  @@index([clinicId])
+  // The unified-inbox "this clinic's conversations, ordered by latest
+  // activity" query — the central requirement of this task.
+  @@index([clinicId, lastMessageAt])
+  @@index([clinicId, channelKey])
+  @@index([patientId])
+  @@map("conversations")
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageSenderType {
+  PATIENT
+  AI
+  STAFF
+  SYSTEM
+}
+
+enum MessageContentType {
+  TEXT
+  MEDIA
+  CHOICE_REPLY
+  LOCATION
+  CONTACT
+  SYSTEM_EVENT
+  UNSUPPORTED
+}
+
+enum MessageDeliveryStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// One generic Message model for all three channels — never
+// WhatsAppMessage/InstagramMessage/MessengerMessage.
+model Message {
+  id             String       @id @default(uuid()) @db.Uuid
+  conversationId String       @db.Uuid
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  // Denormalized from the parent conversation, exactly as
+  // 01-domain-model.md already documents for channelKey ("channel_key
+  // (denormalized)"). channelAccountRef is denormalized the same way here
+  // because the doc's own uniqueness rule for externalId is scoped "per
+  // channel_account_ref", which requires the value to be available on
+  // Message itself, not just reachable via a join.
+  channelKey        ChannelKey
+  channelAccountRef String
+
+  direction     MessageDirection
+  senderType    MessageSenderType
+  // Doc: "sender_ref (staff_id when sender_type=staff)". Named for what it
+  // concretely holds today (a Staff id) rather than the doc's more generic
+  // "sender_ref" — see task report.
+  senderStaffId String?           @db.Uuid
+  senderStaff   Staff?            @relation("MessageSenderStaff", fields: [senderStaffId], references: [id])
+
+  contentType     MessageContentType
+  // Always populated, even for media — a caption/descriptor, never null
+  // just because content_type isn't text. Design rule 2 in
+  // docs/architecture/01-domain-model.md.
+  text            String
+  choiceSelection Json?
+
+  replyToId String?   @db.Uuid
+  replyTo   Message?  @relation("MessageReplyTo", fields: [replyToId], references: [id])
+  replies   Message[] @relation("MessageReplyTo")
+
+  // Meta message id — the idempotency key. Nullable: an outbound message
+  // row can exist before it has actually been sent (and therefore before
+  // Meta has assigned it an id). Never the primary key — see this task's
+  // "EXTERNAL MESSAGE IDENTIFIERS" instruction.
+  externalId        String?
+  externalReplyToId String?
+
+  sentAt     DateTime?
+  receivedAt DateTime?
+
+  deliveryStatus MessageDeliveryStatus @default(PENDING)
+  // "failure (class/code/message, nullable)" — split into three columns
+  // rather than one JSON blob so failure class is directly queryable/
+  // reportable, consistent with how channel-adapter error classification
+  // is treated elsewhere in the architecture (docs/architecture/02-channel-adapters.md).
+  failureClass   String?
+  failureCode    String?
+  failureMessage String?
+
+  aiGenerated    Boolean @default(false)
+  // "degraded (bool + reason)" — kept as a real boolean rather than buried
+  // in JSON because docs/architecture/02-channel-adapters.md §4 requires
+  // degradation to be a trackable/reportable business event, not just an
+  // opaque flag.
+  degraded       Boolean @default(false)
+  degradedReason String?
+
+  // Opaque, write-mostly — business logic must never read this. Design
+  // rule 3 in docs/architecture/01-domain-model.md.
+  channelMeta Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attachments Attachment[]
+
+  // "external_id per channel_account_ref (Meta message ids are unique per
+  // surface, not globally)" — literal transcription of the documented
+  // constraint. Multiple NULL externalIds (not-yet-sent messages) do not
+  // conflict under Postgres unique-index semantics.
+  @@unique([channelAccountRef, externalId])
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+enum AttachmentType {
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  VOICE
+  STICKER
+  UNSUPPORTED
+}
+
+enum AttachmentSource {
+  DOWNLOADED
+  REMOTE_URL
+}
+
+model Attachment {
+  id        String  @id @default(uuid()) @db.Uuid
+  messageId String  @db.Uuid
+  message   Message @relation(fields: [messageId], references: [id])
+
+  type       AttachmentType
+  // No object storage integration in this task — see
+  // docs/architecture/01-domain-model.md's Attachment section and this
+  // task's explicit "do not implement actual object storage" instruction.
+  // Nullable: a remote_url-sourced attachment may not have been downloaded
+  // and re-hosted yet.
+  storageRef String?
+  mime       String?
+  bytes      Int?
+  caption    String?
+  source     AttachmentSource
+
+  createdAt DateTime @default(now())
+
+  @@index([messageId])
+  @@map("attachments")
+}
+
+// ============================================================================
+// Appointment engine (Task 4C-3B)
+//
+// Scope: DoctorSchedule, Appointment only, per
+// docs/architecture/01-domain-model.md §2 ("Doctor / DoctorSchedule" and
+// "Appointment" sections) and ADR-005 (appointment-transaction-model) for
+// the double-booking constraint. Reuses the existing Clinic, Doctor, Patient,
+// Conversation models (Task 4C-1/4C-2) — no duplicate provider/patient/
+// clinic tables. No services, repositories, or booking API in this task.
+//
+// Timezone: Clinic.timezone (Task 4C-1) remains the single source of local
+// wall-clock time; no per-doctor or per-appointment timezone field is added
+// (undocumented) and no conversion service is implemented here.
+// DoctorSchedule.startTime/endTime are stored as `@db.Time` (time-of-day,
+// no date/offset) because a recurring weekly slot's absolute UTC instant
+// depends on which calendar date it next occurs on plus Clinic.timezone —
+// resolving that is a future availability-service concern, not a schema
+// concern. Appointment.scheduledStart/scheduledEnd/holdExpiresAt are actual
+// booked instants, not recurring rules, so they are stored as
+// `@db.Timestamptz` (timezone-aware) per this task's explicit instruction —
+// this is the one deliberate departure from this file's existing plain
+// `DateTime`/`TIMESTAMP(3)` convention for createdAt/updatedAt-style audit
+// fields, justified because these specific fields are "the canonical
+// appointment time" the task calls out, not general audit metadata.
+// ============================================================================
+
+// docs/architecture/01-domain-model.md: "DoctorSchedule: id, doctor_id,
+// day_of_week or specific date, start_time, end_time, slot_duration_minutes,
+// is_exception (holiday/override)." dayOfWeek and specificDate are modeled
+// as two nullable columns per the doc's "or" — application code is expected
+// to set exactly one per row; the doc does not specify a database-level XOR
+// constraint (e.g. a CHECK), so none is invented here (see task report).
+model DoctorSchedule {
+  id       String @id @default(uuid()) @db.Uuid
+  doctorId String @db.Uuid
+  doctor   Doctor @relation(fields: [doctorId], references: [id])
+
+  // 0 (Sunday) .. 6 (Saturday) — a recurring weekly rule. Mutually
+  // exclusive with specificDate per row (see comment above).
+  dayOfWeek Int?
+
+  // A one-off date this row applies to instead of a weekly recurrence —
+  // e.g. a single holiday or a one-day hours override. `@db.Date` matches
+  // the existing Patient.dob convention (no time-of-day component).
+  specificDate DateTime? @db.Date
+
+  // Time-of-day only (no date, no offset) — see the timezone note above.
+  startTime DateTime @db.Time
+  endTime   DateTime @db.Time
+
+  slotDurationMinutes Int
+
+  // Doc: "is_exception (holiday/override)". Distinguishes a one-off
+  // override/holiday row (paired with specificDate) from a standing
+  // weekly rule (paired with dayOfWeek). Whether an exception row means
+  // "closed all day" or "different hours that day" is future
+  // availability-computation logic, not a schema-level distinction — the
+  // doc does not define a separate "unavailable" flag, so none is added.
+  isException Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([doctorId])
+  @@index([doctorId, dayOfWeek])
+  @@index([doctorId, specificDate])
+  @@map("doctor_schedules")
+}
+
+// docs/architecture/01-domain-model.md's Appointment field list, transcribed
+// directly — no reason/type field is added since the doc does not define
+// one.
+enum AppointmentStatus {
+  HELD
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+  RESCHEDULED
+}
+
+// Doc: "created_by (`ai`|`staff`)".
+enum AppointmentCreatedBy {
+  AI
+  STAFF
+}
+
+model Appointment {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Denormalized directly onto Appointment, exactly as the doc's field
+  // list specifies (clinic_id) — same "query speed / always-scoped"
+  // reasoning already documented for Conversation.clinicId.
+  clinicId String @db.Uuid
+  clinic   Clinic @relation(fields: [clinicId], references: [id])
+
+  // The canonical CRM subject — required, never a channel identifier
+  // (whatsapp/instagram/messenger ids live on ChannelIdentity, one layer
+  // down, per design rule 1). By the time an Appointment row exists, ADR-004
+  // identity resolution has already happened.
+  patientId String  @db.Uuid
+  patient   Patient @relation(fields: [patientId], references: [id])
+
+  doctorId String @db.Uuid
+  doctor   Doctor @relation(fields: [doctorId], references: [id])
+
+  // Absolute booked instants — see the timezone note above.
+  scheduledStart DateTime @db.Timestamptz
+  scheduledEnd   DateTime @db.Timestamptz
+
+  // No default: unlike Conversation.status (always OPEN on creation),
+  // whether a new Appointment row starts HELD (via hold_slot()) or
+  // CONFIRMED (a direct book_appointment()) is a real branch in the
+  // documented booking flow (ADR-005) — the application must set it
+  // explicitly rather than the schema guessing one.
+  status AppointmentStatus
+
+  // Doc: "source_conversation_id, source_channel". Nullable — a
+  // staff-created appointment (created_by = staff, e.g. made directly in
+  // the portal, not via a channel conversation) has neither.
+  sourceConversationId String?       @db.Uuid
+  sourceConversation   Conversation? @relation(fields: [sourceConversationId], references: [id])
+  sourceChannel        ChannelKey?
+
+  // Short human-readable code shown to the patient; also a high-confidence
+  // identity-linking signal per docs/architecture/03-conversation-and-inbox.md
+  // §4's linking rules table ("a system-issued appointment reference code,
+  // quoted back by the patient").
+  referenceCode String @unique
+
+  // For the optional hold_slot() short-lived reservation (ADR-005).
+  holdExpiresAt DateTime? @db.Timestamptz
+
+  // ADR-005: every write tool requires an idempotency key derived from the
+  // triggering message's external_id, so a duplicated webhook delivery
+  // cannot double-book. Nullable + unique mirrors Message.externalId's
+  // existing pattern (multiple NULLs allowed under Postgres unique-index
+  // semantics) — a staff-created appointment has no triggering message.
+  idempotencyKey String? @unique
+
+  createdBy AppointmentCreatedBy
+
+  cancelledReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // BOOKING SAFETY (ADR-005): "A database-level unique constraint on
+  // (doctor_id, scheduled_start) for non-cancelled appointments... provides
+  // a second, independent guarantee against double-booking even under
+  // concurrent requests." Prisma's schema DSL has no syntax for a partial
+  // (filtered) unique index, so this exact constraint is added as raw SQL
+  // in this task's migration rather than as a `@@unique` here — see the
+  // migration file and the task report for the follow-up needed if Prisma
+  // ever adds native support, and for this constraint's known limitation
+  // (it only blocks two rows sharing the identical start instant; it does
+  // NOT prevent unequal-length appointments overlapping at different start
+  // times — the architecture does not call for a range-exclusion
+  // constraint, so none is added).
+  @@index([clinicId])
+  @@index([doctorId, scheduledStart])
+  @@index([patientId, scheduledStart])
+  @@map("appointments")
+}

@@ -123,6 +123,11 @@ is a separate, later, optional concern — it is not this system's internal AI/h
 until a client need for staff to answer from Meta Business Suite itself is confirmed (see roadmap open question
 OQ-3 in [05-implementation-roadmap.md](05-implementation-roadmap.md)).
 
+This state machine is `Conversation.mode` — a different field from `Conversation.status` (the staff-facing inbox
+lifecycle: open/snoozed/resolved/archived). Waiting for a human is expressed as `mode = PENDING`, not a status
+value — `status = pending_human` is retired. See [01-domain-model.md](01-domain-model.md)'s Conversation section
+("`status` vs `mode` — resolved") for the full decision and canonical status/mode examples.
+
 ## 6. Staff portal non-negotiables (inbox UI)
 
 - Staff can never compose a message the channel will reject; the composer disables send and explains why, using

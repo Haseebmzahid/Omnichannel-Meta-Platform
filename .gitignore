@@ -6,6 +6,9 @@ coverage/
 *.tsbuildinfo
 *.log
 
+# Generated Prisma client — regenerated via `pnpm --filter @clinic/api run db:generate`
+apps/api/src/generated/
+
 .env
 .env.local
 .env.*.local

@@ -2,5 +2,19 @@
   "name": "@clinic/config",
   "version": "0.0.0",
   "private": true,
-  "description": "Shared, zod-validated environment configuration schema — scaffolded, implementation pending."
+  "description": "Shared, zod-validated environment configuration schema.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.3.0",
+    "vitest": "^4.1.11"
+  }
 }
