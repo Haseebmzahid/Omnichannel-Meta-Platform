@@ -104,7 +104,9 @@ export function ConversationView({ conversationId, currentStaffId, currentStaffR
       <Composer
         disabled={composerDisabled}
         disabledReason={composerDisabledReason}
-        onSend={(text) => sendReply.mutate(text)}
+        onSend={async (text) => {
+          await sendReply.mutateAsync(text);
+        }}
         isSending={sendReply.isPending}
         sendError={sendReply.isError ? (sendReply.error instanceof ApiError ? sendReply.error.message : 'Could not send message.') : null}
       />

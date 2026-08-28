@@ -83,7 +83,7 @@ describe('ConversationView', () => {
   });
 
   // 8. Staff reply
-  it('sends a reply and clears the composer', async () => {
+  it('sends a reply and clears the composer only after the send succeeds', async () => {
     mockReadEndpoints(baseConversation(), []);
     vi.mocked(inboxApi.sendReply).mockResolvedValue({ messageId: 'm-new', channel: 'WHATSAPP', deliveryStatus: 'SENT', delivered: true });
     const user = userEvent.setup();
@@ -95,7 +95,58 @@ describe('ConversationView', () => {
     await user.click(screen.getByRole('button', { name: 'Send message' }));
 
     await waitFor(() => expect(inboxApi.sendReply).toHaveBeenCalledWith('conv-1', 'On my way, see you soon.'));
-    expect(composer).toHaveValue('');
+    await waitFor(() => expect(composer).toHaveValue(''));
+  });
+
+  // 10. failed staff reply — the draft is kept, not silently discarded, and
+  // the failure is surfaced near the composer.
+  it('keeps the composer text and shows an error when sending a reply fails', async () => {
+    mockReadEndpoints(baseConversation(), []);
+    vi.mocked(inboxApi.sendReply).mockRejectedValue(new ApiError(502, 'Could not send message.'));
+    const user = userEvent.setup();
+
+    renderWithProviders(<ConversationView conversationId="conv-1" currentStaffId="staff-1" currentStaffRole="AGENT" />);
+
+    const composer = await screen.findByLabelText('Reply message');
+    await user.type(composer, 'This will fail to send.');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not send message.');
+    expect(composer).toHaveValue('This will fail to send.');
+  });
+
+  // 11. empty-message validation — no accidental empty/whitespace-only sends.
+  it('never sends an empty or whitespace-only message', async () => {
+    mockReadEndpoints(baseConversation(), []);
+    const user = userEvent.setup();
+
+    renderWithProviders(<ConversationView conversationId="conv-1" currentStaffId="staff-1" currentStaffRole="AGENT" />);
+
+    const composer = await screen.findByLabelText('Reply message');
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    expect(sendButton).toBeDisabled();
+
+    await user.type(composer, '   ');
+    expect(sendButton).toBeDisabled();
+
+    await user.keyboard('{Enter}');
+    expect(inboxApi.sendReply).not.toHaveBeenCalled();
+  });
+
+  // 7b. Chronological ordering — the UI preserves the order the API
+  // returns (oldest-first, per message.service.ts), never re-sorts.
+  it('renders messages in the chronological order the API returns', async () => {
+    mockReadEndpoints(baseConversation(), [
+      message({ id: 'm1', text: 'First message', createdAt: new Date('2026-01-01T10:00:00Z').toISOString() }),
+      message({ id: 'm2', text: 'Second message', createdAt: new Date('2026-01-01T10:05:00Z').toISOString() }),
+      message({ id: 'm3', text: 'Third message', createdAt: new Date('2026-01-01T10:10:00Z').toISOString() }),
+    ]);
+
+    renderWithProviders(<ConversationView conversationId="conv-1" currentStaffId="staff-1" currentStaffRole="AGENT" />);
+
+    await screen.findByText('First message');
+    const order = screen.getAllByText(/(First|Second|Third) message/).map((el) => el.textContent);
+    expect(order).toEqual(['First message', 'Second message', 'Third message']);
   });
 
   // 9. Takeover action

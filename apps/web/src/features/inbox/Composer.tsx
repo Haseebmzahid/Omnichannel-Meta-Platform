@@ -8,7 +8,11 @@ const MAX_REPLY_LENGTH = 4096;
 interface ComposerProps {
   disabled?: boolean;
   disabledReason?: string;
-  onSend: (text: string) => void;
+  // Returns a Promise so the composer can wait for the actual outcome —
+  // the draft is only cleared once the send genuinely succeeds; a failed
+  // send leaves the text in place (surfaced via sendError) rather than
+  // silently discarding what staff typed.
+  onSend: (text: string) => Promise<void>;
   isSending: boolean;
   sendError?: string | null;
 }
@@ -16,11 +20,16 @@ interface ComposerProps {
 export function Composer({ disabled, disabledReason, onSend, isSending, sendError }: ComposerProps) {
   const [text, setText] = useState('');
 
-  function handleSend() {
+  async function handleSend() {
     const trimmed = text.trim();
     if (!trimmed || isSending) return;
-    onSend(trimmed);
-    setText('');
+    try {
+      await onSend(trimmed);
+      setText('');
+    } catch {
+      // Left in place deliberately — sendError (from the parent's mutation
+      // state) already surfaces the failure; the draft is not lost.
+    }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {

@@ -13,7 +13,11 @@ export function InboxPage() {
   if (!staff) return null; // RequireAuth guarantees this never renders unauthenticated
 
   return (
-    <div className="grid h-full grid-cols-[320px_1fr]">
+    // The list column stays readable but never eats the whole viewport at
+    // narrower desktop widths — minmax() keeps it between 240px and 320px
+    // (Tailwind's existing arbitrary-value support, no new dependency) while
+    // the conversation panel (1fr, already min-w-0 below) takes the rest.
+    <div className="grid h-full grid-cols-[minmax(240px,320px)_1fr]">
       <ConversationList activeConversationId={conversationId} onSelect={(id) => navigate(`/inbox/${id}`)} />
 
       <div className="min-w-0 bg-bg">
