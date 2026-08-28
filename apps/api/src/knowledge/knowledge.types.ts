@@ -18,3 +18,45 @@ export interface SearchClinicKnowledgeResult {
   found: boolean;
   results: ClinicKnowledgeResultItem[];
 }
+
+// --- Task 7-7: the staff-facing knowledge-authoring API ------------------
+// Deliberately separate from ClinicKnowledgeResultItem above (that one is
+// "what the AI model may see" — never id/tags/isActive); these describe
+// "what a staff member managing the knowledge base sees and sends", the
+// same distinction staff.types.ts draws between StaffSummaryDto and
+// AuthenticatedStaffContext.
+
+// clinicId is intentionally NOT a field here — same as staff.types.ts's
+// CreateStaffInput: it always comes from the authenticated caller's own
+// AuthenticatedStaffContext (see knowledge.controller.ts), never from a
+// request body.
+export interface CreateKnowledgeDocumentInput {
+  category: KnowledgeCategory;
+  title: string;
+  body: string;
+  tags: string[];
+}
+
+export type UpdateKnowledgeDocumentInput = CreateKnowledgeDocumentInput;
+
+export interface UpdateKnowledgeDocumentStatusInput {
+  isActive: boolean;
+}
+
+// The full safe Staff-facing projection of a KnowledgeDocument row — unlike
+// ClinicKnowledgeResultItem, this DOES include id/tags/isActive/timestamps,
+// because a management UI genuinely needs them to identify, edit, and
+// disable a specific row. Still never leaks anything Prisma-internal beyond
+// the model's own columns.
+export interface KnowledgeDocumentSummaryDto {
+  id: string;
+  clinicId: string;
+  category: KnowledgeCategory;
+  title: string;
+  body: string;
+  tags: string[];
+  isActive: boolean;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

@@ -96,6 +96,80 @@ export interface StaffSummary {
   clinicId: string;
 }
 
+// --- staff.types.ts: StaffSummaryDto (Task 7-3's staff-management API) --
+// A distinct type from StaffSummary above (that one is "who is logged in",
+// this one is "a row in the staff-management list") — mirrors the backend's
+// own StaffSummaryDto exactly, never passwordHash/mfaSecret.
+
+export const StaffStatus = {
+  ACTIVE: 'ACTIVE',
+  DISABLED: 'DISABLED',
+} as const;
+export type StaffStatus = (typeof StaffStatus)[keyof typeof StaffStatus];
+
+export interface Staff {
+  id: string;
+  name: string;
+  email: string;
+  role: StaffRole;
+  status: StaffStatus;
+  clinicId: string;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+// clinicId is deliberately absent — apps/api/src/staff/staff.controller.ts
+// derives it from the session cookie and drops any caller-supplied value.
+export interface CreateStaffInput {
+  name: string;
+  email: string;
+  password: string;
+  role: StaffRole;
+}
+
+// --- knowledge.types.ts: KnowledgeDocumentSummaryDto (Task 7-7's
+// knowledge-authoring API) ------------------------------------------------
+// Distinct from ClinicKnowledgeResultItem (the AI-tool's own, never-exposed
+// shape) — this is the staff-facing management projection, which does
+// include id/tags/isActive/timestamps because a management UI genuinely
+// needs them to identify, edit, and disable a specific row.
+
+export const KnowledgeCategory = {
+  CLINIC_INFO: 'CLINIC_INFO',
+  DOCTOR: 'DOCTOR',
+  SERVICE: 'SERVICE',
+  FEE: 'FEE',
+  HOURS: 'HOURS',
+  LOCATION: 'LOCATION',
+  POLICY: 'POLICY',
+  FAQ: 'FAQ',
+} as const;
+export type KnowledgeCategory = (typeof KnowledgeCategory)[keyof typeof KnowledgeCategory];
+
+export interface KnowledgeDocument {
+  id: string;
+  clinicId: string;
+  category: KnowledgeCategory;
+  title: string;
+  body: string;
+  tags: string[];
+  isActive: boolean;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// clinicId is deliberately absent — apps/api/src/knowledge/knowledge.controller.ts
+// derives it from the session cookie and drops any caller-supplied value.
+export interface CreateKnowledgeDocumentInput {
+  category: KnowledgeCategory;
+  title: string;
+  body: string;
+  tags: string[];
+}
+
+export type UpdateKnowledgeDocumentInput = CreateKnowledgeDocumentInput;
+
 // --- inbox.types.ts -------------------------------------------------------
 
 export interface InboxContactSummary {

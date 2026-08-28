@@ -4,6 +4,8 @@ import { AppShell } from './components/layout/AppShell';
 import { LoginPage } from './features/auth/LoginPage';
 import { RequireAuth } from './features/auth/RequireAuth';
 import { InboxPage } from './features/inbox/InboxPage';
+import { KnowledgePage } from './features/knowledge/KnowledgePage';
+import { StaffPage } from './features/staff/StaffPage';
 import { setUnauthorizedHandler } from './lib/query-client';
 
 /** Wires lib/query-client.ts's 401 handling to an actual router navigation, once a router exists. */
@@ -25,6 +27,8 @@ function App() {
           <Route element={<AppShell />}>
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/inbox/:conversationId" element={<InboxPage />} />
+            <Route path="/staff" element={<StaffPage />} />
+            <Route path="/knowledge" element={<KnowledgePage />} />
             <Route path="/" element={<Navigate to="/inbox" replace />} />
           </Route>
         </Route>

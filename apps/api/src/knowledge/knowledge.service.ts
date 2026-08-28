@@ -1,7 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import type { KnowledgeCategory } from '../generated/prisma/enums';
+import type { KnowledgeDocument } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import type { SearchClinicKnowledgeInput, SearchClinicKnowledgeResult } from './knowledge.types';
+import { KnowledgeDocumentNotFoundException } from './knowledge.errors';
+import type {
+  CreateKnowledgeDocumentInput,
+  KnowledgeDocumentSummaryDto,
+  SearchClinicKnowledgeInput,
+  SearchClinicKnowledgeResult,
+  UpdateKnowledgeDocumentInput,
+  UpdateKnowledgeDocumentStatusInput,
+} from './knowledge.types';
 
 // Task 4C-10 (original) / Task 4C-12 (this revision) — the grounding source
 // for search_clinic_knowledge() (docs/architecture/01-domain-model.md's
@@ -97,6 +106,74 @@ export class ClinicKnowledgeService {
 
     return { found: results.length > 0, results };
   }
+
+  // --- Task 7-7: staff-facing management methods --------------------------
+  // Deliberately separate from search() above — same table, same
+  // clinic-scoping discipline, but these return the full safe row
+  // (KnowledgeDocumentSummaryDto), not the AI-tool's stripped-down
+  // ClinicKnowledgeResultItem.
+
+  // No pagination, same reasoning as StaffService.listStaff — a per-clinic
+  // knowledge base is realistically tens of documents, not an unbounded
+  // list.
+  async listDocuments(clinicId: string): Promise<KnowledgeDocumentSummaryDto[]> {
+    const documents = await this.prisma.knowledgeDocument.findMany({
+      where: { clinicId },
+      orderBy: [{ category: 'asc' }, { title: 'asc' }],
+    });
+    return documents.map(toKnowledgeDocumentSummary);
+  }
+
+  async createDocument(clinicId: string, staffId: string, input: CreateKnowledgeDocumentInput): Promise<KnowledgeDocumentSummaryDto> {
+    const document = await this.prisma.knowledgeDocument.create({
+      data: { clinicId, category: input.category, title: input.title, body: input.body, tags: input.tags, updatedBy: staffId },
+    });
+    return toKnowledgeDocumentSummary(document);
+  }
+
+  async updateDocument(clinicId: string, id: string, staffId: string, input: UpdateKnowledgeDocumentInput): Promise<KnowledgeDocumentSummaryDto> {
+    await this.assertBelongsToClinic(clinicId, id);
+    const document = await this.prisma.knowledgeDocument.update({
+      where: { id },
+      data: { category: input.category, title: input.title, body: input.body, tags: input.tags, updatedBy: staffId },
+    });
+    return toKnowledgeDocumentSummary(document);
+  }
+
+  async updateStatus(clinicId: string, id: string, staffId: string, input: UpdateKnowledgeDocumentStatusInput): Promise<KnowledgeDocumentSummaryDto> {
+    await this.assertBelongsToClinic(clinicId, id);
+    const document = await this.prisma.knowledgeDocument.update({
+      where: { id },
+      data: { isActive: input.isActive, updatedBy: staffId },
+    });
+    return toKnowledgeDocumentSummary(document);
+  }
+
+  // The one clinic-scoped existence check every management mutation runs
+  // first — same "not found" whether the id is genuinely unknown or
+  // belongs to another clinic, matching StaffService's own convention (no
+  // cross-clinic leakage).
+  private async assertBelongsToClinic(clinicId: string, id: string): Promise<void> {
+    const document = await this.prisma.knowledgeDocument.findFirst({ where: { id, clinicId } });
+    if (!document) throw new KnowledgeDocumentNotFoundException(id);
+  }
+}
+
+// The one place a raw Prisma KnowledgeDocument row is narrowed to the safe
+// management DTO.
+function toKnowledgeDocumentSummary(document: KnowledgeDocument): KnowledgeDocumentSummaryDto {
+  return {
+    id: document.id,
+    clinicId: document.clinicId,
+    category: document.category,
+    title: document.title,
+    body: document.body,
+    tags: document.tags,
+    isActive: document.isActive,
+    updatedBy: document.updatedBy,
+    createdAt: document.createdAt.toISOString(),
+    updatedAt: document.updatedAt.toISOString(),
+  };
 }
 
 // Requirement 7 — deterministic ordering: highest score first; any tie

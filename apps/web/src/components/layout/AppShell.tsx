@@ -4,6 +4,7 @@ import { Avatar } from '../ui/Avatar';
 import { Button } from '../ui/Button';
 import { useAuth, useLogout } from '../../features/auth/useAuth';
 import { ROLE_LABELS } from '../../features/inbox/permissions';
+import { Sidebar } from './Sidebar';
 
 export function AppShell() {
   const { staff } = useAuth();
@@ -41,9 +42,12 @@ export function AppShell() {
         )}
       </header>
 
-      <main className="min-h-0 flex-1">
-        <Outlet />
-      </main>
+      <div className="flex min-h-0 flex-1">
+        <Sidebar />
+        <main className="min-w-0 flex-1">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }

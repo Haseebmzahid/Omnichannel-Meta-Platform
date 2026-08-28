@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { KnowledgeCategory } from '../generated/prisma/enums';
 import type { PrismaService } from '../prisma/prisma.service';
+import { KnowledgeDocumentNotFoundException } from './knowledge.errors';
 import { ClinicKnowledgeService } from './knowledge.service';
 import { PILOT_CLINIC_KNOWLEDGE_DOCUMENTS } from './pilot-clinic-knowledge.data';
 
@@ -174,5 +175,127 @@ describe('ClinicKnowledgeService.search — natural-language retrieval (Task 4C-
     for (const item of result.results) {
       expect(Object.keys(item).sort()).toEqual(['body', 'category', 'title']);
     }
+  });
+});
+
+// Task 7-7 — the new staff-facing management methods. Deliberately a
+// separate describe block from search()'s own tests above: different
+// Prisma calls (findMany/findFirst/create/update, not the scored-search
+// findMany), same clinic-scoping discipline.
+describe('ClinicKnowledgeService — staff-facing management methods (Task 7-7)', () => {
+  const STAFF_ID = 'staff-1';
+  const DOCUMENT_ID = 'doc-1';
+
+  function rawDocument(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: DOCUMENT_ID,
+      clinicId: CLINIC_ID,
+      category: KnowledgeCategory.FAQ,
+      title: 'Do you accept walk-ins?',
+      body: 'Yes, walk-ins are welcome during OPD hours.',
+      tags: ['walk-in'],
+      isActive: true,
+      updatedBy: STAFF_ID,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+      ...overrides,
+    };
+  }
+
+  function buildManagementService(overrides: Record<string, ReturnType<typeof vi.fn>> = {}) {
+    const knowledgeDocument = {
+      findMany: vi.fn().mockResolvedValue([rawDocument()]),
+      findFirst: vi.fn().mockResolvedValue(rawDocument()),
+      create: vi.fn().mockResolvedValue(rawDocument()),
+      update: vi.fn().mockResolvedValue(rawDocument()),
+      ...overrides,
+    };
+    const prisma = { knowledgeDocument } as unknown as PrismaService;
+    return { service: new ClinicKnowledgeService(prisma), knowledgeDocument };
+  }
+
+  it('listDocuments scopes by clinicId and never leaks a raw Prisma row shape beyond the DTO', async () => {
+    const { service, knowledgeDocument } = buildManagementService();
+
+    const result = await service.listDocuments(CLINIC_ID);
+
+    expect(knowledgeDocument.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { clinicId: CLINIC_ID } }));
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: DOCUMENT_ID,
+        clinicId: CLINIC_ID,
+        title: 'Do you accept walk-ins?',
+        isActive: true,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+      }),
+    ]);
+  });
+
+  it('createDocument writes the given clinicId and staffId (as updatedBy), never a client-supplied one', async () => {
+    const { service, knowledgeDocument } = buildManagementService();
+
+    await service.createDocument(CLINIC_ID, STAFF_ID, {
+      category: KnowledgeCategory.FAQ,
+      title: 'Do you accept walk-ins?',
+      body: 'Yes, walk-ins are welcome during OPD hours.',
+      tags: ['walk-in'],
+    });
+
+    expect(knowledgeDocument.create).toHaveBeenCalledWith({
+      data: {
+        clinicId: CLINIC_ID,
+        category: KnowledgeCategory.FAQ,
+        title: 'Do you accept walk-ins?',
+        body: 'Yes, walk-ins are welcome during OPD hours.',
+        tags: ['walk-in'],
+        updatedBy: STAFF_ID,
+      },
+    });
+  });
+
+  it('updateDocument checks clinic ownership first, then updates by id', async () => {
+    const { service, knowledgeDocument } = buildManagementService();
+
+    await service.updateDocument(CLINIC_ID, DOCUMENT_ID, STAFF_ID, {
+      category: KnowledgeCategory.HOURS,
+      title: 'OPD Hours',
+      body: 'Mon-Sat 9am-5pm',
+      tags: [],
+    });
+
+    expect(knowledgeDocument.findFirst).toHaveBeenCalledWith({ where: { id: DOCUMENT_ID, clinicId: CLINIC_ID } });
+    expect(knowledgeDocument.update).toHaveBeenCalledWith({
+      where: { id: DOCUMENT_ID },
+      data: { category: KnowledgeCategory.HOURS, title: 'OPD Hours', body: 'Mon-Sat 9am-5pm', tags: [], updatedBy: STAFF_ID },
+    });
+  });
+
+  it('updateDocument throws KnowledgeDocumentNotFoundException for a document belonging to another clinic — never leaks that it exists elsewhere', async () => {
+    const { service, knowledgeDocument } = buildManagementService({ findFirst: vi.fn().mockResolvedValue(null) });
+
+    await expect(
+      service.updateDocument(CLINIC_ID, DOCUMENT_ID, STAFF_ID, { category: KnowledgeCategory.FAQ, title: 'x', body: 'x', tags: [] }),
+    ).rejects.toBeInstanceOf(KnowledgeDocumentNotFoundException);
+    expect(knowledgeDocument.update).not.toHaveBeenCalled();
+  });
+
+  it('updateStatus checks clinic ownership first, then flips isActive and records updatedBy', async () => {
+    const { service, knowledgeDocument } = buildManagementService();
+
+    await service.updateStatus(CLINIC_ID, DOCUMENT_ID, STAFF_ID, { isActive: false });
+
+    expect(knowledgeDocument.findFirst).toHaveBeenCalledWith({ where: { id: DOCUMENT_ID, clinicId: CLINIC_ID } });
+    expect(knowledgeDocument.update).toHaveBeenCalledWith({
+      where: { id: DOCUMENT_ID },
+      data: { isActive: false, updatedBy: STAFF_ID },
+    });
+  });
+
+  it('updateStatus throws KnowledgeDocumentNotFoundException for an unknown id', async () => {
+    const { service, knowledgeDocument } = buildManagementService({ findFirst: vi.fn().mockResolvedValue(null) });
+
+    await expect(service.updateStatus(CLINIC_ID, DOCUMENT_ID, STAFF_ID, { isActive: false })).rejects.toBeInstanceOf(KnowledgeDocumentNotFoundException);
+    expect(knowledgeDocument.update).not.toHaveBeenCalled();
   });
 });
