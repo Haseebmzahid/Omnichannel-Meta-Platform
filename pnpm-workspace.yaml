@@ -8,3 +8,6 @@ allowBuilds:
   esbuild: true
   prisma: true
   protobufjs: true
+minimumReleaseAgeExclude:
+  - '@aws-sdk/client-s3@3.1120.0'
+  - '@aws-sdk/s3-request-presigner@3.1120.0'

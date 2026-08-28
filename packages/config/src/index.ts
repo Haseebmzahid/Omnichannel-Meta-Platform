@@ -151,6 +151,44 @@ export const envSchema = z
     // production-required check the way AUTH_JWT_SECRET has — but it must
     // be set to the real deployed frontend origin in production.
     WEB_ORIGIN: z.string().min(1).default('http://localhost:5173'),
+    // Media storage (Task 7-10) — the S3-compatible object storage
+    // Attachment.storage_ref points into (docs/architecture/01-domain-model.md's
+    // Attachment section). All optional: nothing in the app calls
+    // MediaStorage yet (no download-and-rehost pipeline, no browser-facing
+    // endpoint — a later task), so the API boots and existing tests run
+    // without any of these set, exactly like the Meta/Gemini vars above
+    // before their features existed. Not yet added to the
+    // production-required checks below — add that once a real caller
+    // depends on this being configured.
+    // MEDIA_STORAGE_ENDPOINT: custom S3-compatible endpoint (e.g. a MinIO/
+    //   R2/Spaces URL). Leave unset to use real AWS S3's own regional
+    //   endpoints.
+    // MEDIA_STORAGE_REGION: required by the S3 API/SDK even for non-AWS
+    //   endpoints (most S3-compatible services accept any value, e.g.
+    //   MinIO); defaults to AWS's own default region.
+    // MEDIA_STORAGE_BUCKET / MEDIA_STORAGE_ACCESS_KEY_ID /
+    //   MEDIA_STORAGE_SECRET_ACCESS_KEY: bucket name and credentials. The
+    //   access key and secret are treated like passwords — never logged
+    //   (see media/providers/s3-media-storage.provider.ts's sanitizeError()).
+    // MEDIA_STORAGE_FORCE_PATH_STYLE: MinIO and most non-AWS S3-compatible
+    //   services require path-style addressing; real AWS S3 works with
+    //   either, so this defaults to true (the safer default for an as-yet-
+    //   undecided provider, per 08-technology-stack.md's open cloud-provider
+    //   question).
+    MEDIA_STORAGE_ENDPOINT: z.string().min(1).optional(),
+    MEDIA_STORAGE_REGION: z.string().min(1).default('us-east-1'),
+    MEDIA_STORAGE_BUCKET: z.string().min(1).optional(),
+    MEDIA_STORAGE_ACCESS_KEY_ID: z.string().min(1).optional(),
+    MEDIA_STORAGE_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    // z.coerce.boolean() is a known trap for a string env var: it just
+    // applies JS's Boolean(), so the *string* "false" coerces to `true`
+    // (any non-empty string does). An explicit 'true'|'false' enum + a
+    // transform is the correct way to parse a boolean-shaped env var, and
+    // fails loudly on a typo instead of silently treating it as true.
+    MEDIA_STORAGE_FORCE_PATH_STYLE: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((val) => val === 'true'),
   })
   .superRefine((val, ctx) => {
     if (val.NODE_ENV !== 'production') return;

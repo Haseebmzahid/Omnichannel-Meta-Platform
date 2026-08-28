@@ -9,6 +9,7 @@ import { WhatsAppModule } from './channels/whatsapp/whatsapp.module';
 import { HealthController } from './health.controller';
 import { InboxModule } from './inbox/inbox.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
+import { MediaStorageModule } from './media/media-storage.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { StaffModule } from './staff/staff.module';
@@ -32,6 +33,13 @@ import { StaffModule } from './staff/staff.module';
     // that KnowledgeModule has one, mirroring every other feature module's
     // explicit registration.
     KnowledgeModule,
+    // Task 7-10 — storage foundation only (MediaStorage/MEDIA_STORAGE
+    // token). No controller, no consumer yet — registered here so a future
+    // download-and-rehost pipeline can inject MEDIA_STORAGE without new
+    // wiring. Safe with zero configuration: S3MediaStorage never
+    // constructs/calls its S3 client until upload/getSignedReadUrl/delete
+    // is actually invoked (see media-storage.module.ts's header comment).
+    MediaStorageModule,
   ],
   controllers: [HealthController],
 })

@@ -54,6 +54,8 @@ describe('loadConfig', () => {
       MESSENGER_API_VERSION: 'v26.0',
       AUTH_JWT_SECRET: 'a'.repeat(32),
       WEB_ORIGIN: 'https://portal.example.com',
+      MEDIA_STORAGE_REGION: 'us-east-1',
+      MEDIA_STORAGE_FORCE_PATH_STYLE: true,
     });
   });
 
@@ -69,6 +71,8 @@ describe('loadConfig', () => {
       INSTAGRAM_API_VERSION: 'v26.0',
       MESSENGER_API_VERSION: 'v26.0',
       WEB_ORIGIN: 'http://localhost:5173',
+      MEDIA_STORAGE_REGION: 'us-east-1',
+      MEDIA_STORAGE_FORCE_PATH_STYLE: true,
     });
   });
 
@@ -353,5 +357,40 @@ describe('loadConfig', () => {
 
   it('throws a clear error for an AUTH_JWT_SECRET shorter than 32 characters', () => {
     expect(() => loadConfig({ AUTH_JWT_SECRET: 'too-short' })).toThrow(/AUTH_JWT_SECRET/);
+  });
+
+  it('defaults MEDIA_STORAGE_REGION and MEDIA_STORAGE_FORCE_PATH_STYLE, and allows overriding both', () => {
+    const defaults = loadConfig({});
+    expect(defaults.MEDIA_STORAGE_REGION).toBe('us-east-1');
+    expect(defaults.MEDIA_STORAGE_FORCE_PATH_STYLE).toBe(true);
+
+    const overridden = loadConfig({ MEDIA_STORAGE_REGION: 'eu-west-1', MEDIA_STORAGE_FORCE_PATH_STYLE: 'false' });
+    expect(overridden.MEDIA_STORAGE_REGION).toBe('eu-west-1');
+    expect(overridden.MEDIA_STORAGE_FORCE_PATH_STYLE).toBe(false);
+  });
+
+  it('boots in production without any media storage env vars — nothing depends on them yet', () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: 'production',
+        GEMINI_API_KEY: 'test-key',
+        WHATSAPP_VERIFY_TOKEN: 'verify-token',
+        WHATSAPP_APP_SECRET: 'app-secret',
+        WHATSAPP_PHONE_NUMBER_ID: '1234567890',
+        WHATSAPP_CLINIC_ID: 'clinic-1',
+        WHATSAPP_ACCESS_TOKEN: 'access-token',
+        INSTAGRAM_VERIFY_TOKEN: 'ig-verify-token',
+        INSTAGRAM_APP_SECRET: 'ig-app-secret',
+        INSTAGRAM_ACCOUNT_ID: 'ig-account-1',
+        INSTAGRAM_CLINIC_ID: 'clinic-1',
+        INSTAGRAM_ACCESS_TOKEN: 'ig-access-token',
+        MESSENGER_VERIFY_TOKEN: 'msgr-verify-token',
+        MESSENGER_APP_SECRET: 'msgr-app-secret',
+        MESSENGER_PAGE_ID: 'msgr-page-1',
+        MESSENGER_CLINIC_ID: 'clinic-1',
+        MESSENGER_ACCESS_TOKEN: 'msgr-access-token',
+        AUTH_JWT_SECRET: 'a'.repeat(32),
+      }),
+    ).not.toThrow();
   });
 });
