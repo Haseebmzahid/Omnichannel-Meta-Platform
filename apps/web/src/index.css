@@ -1,0 +1,101 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+
+/*
+ * Design tokens for the staff portal. Tailwind v4's CSS-first config: this
+ * @theme block is the single source of truth — no tailwind.config.js.
+ *
+ * Palette rationale: warm paper background + deep pine/teal accent, not the
+ * generic indigo/purple SaaS gradient look. Calm and clinical, not flashy.
+ * WHATSAPP/INSTAGRAM are each one solid, muted brand-adjacent color (no
+ * gradients, per the design brief) used only as small identity marks, never
+ * as large fills.
+ */
+@theme {
+  --font-sans:
+    'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+
+  --color-bg: #faf9f6;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f3f2ed;
+  --color-border: #e6e3da;
+  --color-border-strong: #d5d1c4;
+
+  --color-ink: #1c1b19;
+  --color-ink-muted: #6b6862;
+  --color-ink-faint: #9c988f;
+
+  --color-accent: #0e6e5c;
+  --color-accent-hover: #0b5a4a;
+  --color-accent-soft: #e3f1ec;
+  --color-accent-contrast: #ffffff;
+
+  --color-danger: #b3261e;
+  --color-danger-soft: #fbeae9;
+  --color-warning: #9a6700;
+  --color-warning-soft: #fcf3d9;
+
+  --color-whatsapp: #1fa855;
+  --color-whatsapp-soft: #e6f6ec;
+  --color-instagram: #c13584;
+  --color-instagram-soft: #fbebf4;
+
+  --color-ai: #6d5bd0;
+  --color-ai-soft: #efedfb;
+  --color-human: #0e6e5c;
+  --color-human-soft: #e3f1ec;
+
+  --shadow-panel: 0 1px 2px 0 rgb(28 27 25 / 0.04), 0 1px 8px -2px rgb(28 27 25 / 0.06);
+  --shadow-popover: 0 4px 12px -2px rgb(28 27 25 / 0.12), 0 2px 4px -2px rgb(28 27 25 / 0.08);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background-color: var(--color-accent-soft);
+    color: var(--color-accent-hover);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-border-strong);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+}

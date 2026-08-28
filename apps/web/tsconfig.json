@@ -8,6 +8,15 @@
     "jsx": "react-jsx",
     "useDefineForClassFields": true,
     "noEmit": true,
+    // Inherited from tsconfig.base.json for packages that publish .d.ts
+    // files — this app never does (noEmit above; Vite bundles it), and
+    // declaration:true forces every exported symbol's inferred type to be
+    // nameable in a standalone .d.ts, which pnpm's nested store paths
+    // (e.g. pretty-format re-exported through @testing-library/react)
+    // can't always satisfy even though the type is perfectly sound at
+    // the type-checking/bundling level this app actually uses.
+    "declaration": false,
+    "declarationMap": false,
     "types": ["vite/client"]
   },
   "include": ["src", "vite.config.ts"]

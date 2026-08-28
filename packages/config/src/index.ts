@@ -94,6 +94,63 @@ export const envSchema = z
     // implementation time.
     INSTAGRAM_ACCESS_TOKEN: z.string().min(1).optional(),
     INSTAGRAM_API_VERSION: z.string().min(1).default('v26.0'),
+    // Facebook Page Messenger inbound webhook adapter (ADR-008: Messenger's
+    // asset spine is App -> Facebook Page, the same Page a clinic's
+    // Instagram professional account is linked to). Optional here so the
+    // app boots, and existing tests run, without real Meta credentials in
+    // development/test — enforced as required only in production, below.
+    // MESSENGER_VERIFY_TOKEN: shared secret for the GET webhook-verification
+    //   challenge (hub.verify_token) — configured in the Meta App Dashboard,
+    //   same mechanism as WhatsApp's/Instagram's (docs/meta/facebook-
+    //   messenger.md).
+    // MESSENGER_APP_SECRET: HMAC key for X-Hub-Signature-256 verification of
+    //   inbound webhook POSTs — never logged. Per ADR-008 this is, in Meta's
+    //   dashboard, the same App Secret as WhatsApp's/Instagram's; kept as
+    //   its own env var (not aliased) so this channel's config and services
+    //   stay independently testable, matching the existing
+    //   one-config-value-per-channel convention.
+    // MESSENGER_PAGE_ID: the Facebook Page id (the webhook's recipient.id,
+    //   and the id the Send API's POST /{PAGE_ID}/messages is addressed
+    //   to) — this deployment's channelAccountRef, the Messenger analogue
+    //   of WHATSAPP_PHONE_NUMBER_ID/INSTAGRAM_ACCOUNT_ID.
+    // MESSENGER_CLINIC_ID: the single clinic that Page belongs to.
+    //   Config-based, not a Prisma table, for the same single-clinic reason
+    //   as WHATSAPP_CLINIC_ID/INSTAGRAM_CLINIC_ID (roadmap OQ-5).
+    MESSENGER_VERIFY_TOKEN: z.string().min(1).optional(),
+    MESSENGER_APP_SECRET: z.string().min(1).optional(),
+    MESSENGER_PAGE_ID: z.string().min(1).optional(),
+    MESSENGER_CLINIC_ID: z.string().min(1).optional(),
+    // Messenger outbound send slice. MESSENGER_ACCESS_TOKEN: the Page
+    // access token for the Messenger Platform Send API's
+    // `POST /{PAGE_ID}/messages` (re-VERIFIED against
+    // developers.facebook.com/docs/messenger-platform/send-messages at
+    // implementation time) — see
+    // apps/api/src/channels/messenger/messenger-send.service.ts. Never
+    // logged. Required when NODE_ENV=production.
+    // MESSENGER_API_VERSION is deliberately configurable rather than
+    // hardcoded, for the same rolling-retirement reason as
+    // WHATSAPP_API_VERSION/INSTAGRAM_API_VERSION; defaults to the version
+    // verified current at implementation time.
+    MESSENGER_ACCESS_TOKEN: z.string().min(1).optional(),
+    MESSENGER_API_VERSION: z.string().min(1).default('v26.0'),
+    // Staff auth (Task 7-2). Signs the JWT carried in the staff portal's
+    // httpOnly session cookie (see apps/api/src/auth/auth.module.ts).
+    // Optional here so the app boots, and existing tests run, without a
+    // real secret in development/test — enforced as required only in
+    // production, below, same pattern as the Meta secrets above. A
+    // dev-only fallback lives in auth.module.ts, not here, so no
+    // real-looking default secret is ever checked into this schema.
+    AUTH_JWT_SECRET: z.string().min(32).optional(),
+    // Staff portal frontend origin (Task 7-3). The session cookie is
+    // httpOnly + credentialed, so the browser only sends it cross-origin
+    // when the API's CORS response explicitly allows that exact origin
+    // with credentials — see apps/api/src/main.ts's app.enableCors() call.
+    // Defaults to Vite's own default dev port (apps/web/vite.config.ts);
+    // not security-sensitive the way a secret is (a wrong value just
+    // blocks the frontend, it doesn't open anything up), so no
+    // production-required check the way AUTH_JWT_SECRET has — but it must
+    // be set to the real deployed frontend origin in production.
+    WEB_ORIGIN: z.string().min(1).default('http://localhost:5173'),
   })
   .superRefine((val, ctx) => {
     if (val.NODE_ENV !== 'production') return;
@@ -130,6 +187,27 @@ export const envSchema = z
       if (!val[key]) {
         ctx.addIssue({ code: 'custom', path: [key], message: `${key} is required when NODE_ENV=production.` });
       }
+    }
+
+    const requiredMessengerKeys = [
+      'MESSENGER_VERIFY_TOKEN',
+      'MESSENGER_APP_SECRET',
+      'MESSENGER_PAGE_ID',
+      'MESSENGER_CLINIC_ID',
+      'MESSENGER_ACCESS_TOKEN',
+    ] as const;
+    for (const key of requiredMessengerKeys) {
+      if (!val[key]) {
+        ctx.addIssue({ code: 'custom', path: [key], message: `${key} is required when NODE_ENV=production.` });
+      }
+    }
+
+    if (!val.AUTH_JWT_SECRET) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AUTH_JWT_SECRET'],
+        message: 'AUTH_JWT_SECRET is required when NODE_ENV=production.',
+      });
     }
   });
 

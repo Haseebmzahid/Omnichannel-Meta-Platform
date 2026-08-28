@@ -5,6 +5,8 @@ import type { AIContext } from '../ai-context.types';
 import { ChannelOutboundDispatcher } from '../../channels/channel-outbound-dispatcher.service';
 import { InstagramOutboundService } from '../../channels/instagram/instagram-outbound.service';
 import type { InstagramSendService } from '../../channels/instagram/instagram-send.service';
+import { MessengerOutboundService } from '../../channels/messenger/messenger-outbound.service';
+import type { MessengerSendService } from '../../channels/messenger/messenger-send.service';
 import { WhatsAppOutboundService } from '../../channels/whatsapp/whatsapp-outbound.service';
 import type { WhatsAppSendService } from '../../channels/whatsapp/whatsapp-send.service';
 import type { Clinic, Contact, Conversation } from '../../generated/prisma/client';
@@ -98,7 +100,8 @@ describe('send_message tool -> ChannelOutboundDispatcher -> MessageService (inte
   function buildRegistry(whatsAppSendText: ReturnType<typeof vi.fn>) {
     const whatsAppOutbound = new WhatsAppOutboundService(prisma, messageService, { sendText: whatsAppSendText } as unknown as WhatsAppSendService);
     const instagramOutbound = new InstagramOutboundService(prisma, messageService, { sendText: vi.fn() } as unknown as InstagramSendService);
-    const dispatcher = new ChannelOutboundDispatcher(prisma, whatsAppOutbound, instagramOutbound);
+    const messengerOutbound = new MessengerOutboundService(prisma, messageService, { sendText: vi.fn() } as unknown as MessengerSendService);
+    const dispatcher = new ChannelOutboundDispatcher(prisma, whatsAppOutbound, instagramOutbound, messengerOutbound);
 
     const registry = new ToolRegistry();
     registry.register(createSendMessageTool(dispatcher));

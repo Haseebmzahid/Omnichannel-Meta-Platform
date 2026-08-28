@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UnsupportedOutboundChannelException } from './channel-outbound.errors';
 import type { ChannelOutboundAdapter, ChannelOutboundResult, ChannelOutboundTextInput } from './channel-outbound.types';
 import { InstagramOutboundService } from './instagram/instagram-outbound.service';
+import { MessengerOutboundService } from './messenger/messenger-outbound.service';
 import { WhatsAppOutboundService } from './whatsapp/whatsapp-outbound.service';
 
 // The channel-neutral outbound entry point AI/staff should depend on
@@ -12,7 +13,7 @@ import { WhatsAppOutboundService } from './whatsapp/whatsapp-outbound.service';
 //
 //   AI / Staff -> ChannelOutboundDispatcher -> WhatsAppOutboundService
 //                                            -> InstagramOutboundService
-//                                            -> (future) MessengerOutboundService
+//                                            -> MessengerOutboundService
 //
 // Deliberately thin — it does NOT duplicate anything the channel adapters
 // already own (conversation/clinic validation, recipient resolution,
@@ -36,10 +37,12 @@ export class ChannelOutboundDispatcher {
     private readonly prisma: PrismaService,
     whatsAppOutbound: WhatsAppOutboundService,
     instagramOutbound: InstagramOutboundService,
+    messengerOutbound: MessengerOutboundService,
   ) {
     this.adapters = new Map<ChannelKey, ChannelOutboundAdapter>([
       [ChannelKey.WHATSAPP, whatsAppOutbound],
       [ChannelKey.INSTAGRAM, instagramOutbound],
+      [ChannelKey.MESSENGER, messengerOutbound],
     ]);
   }
 

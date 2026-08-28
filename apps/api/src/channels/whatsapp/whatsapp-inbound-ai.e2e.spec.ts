@@ -17,6 +17,8 @@ import { MessageService } from '../../messaging/message.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InstagramOutboundService } from '../instagram/instagram-outbound.service';
 import type { InstagramSendService } from '../instagram/instagram-send.service';
+import { MessengerOutboundService } from '../messenger/messenger-outbound.service';
+import type { MessengerSendService } from '../messenger/messenger-send.service';
 import { WhatsAppAccountResolverService } from './whatsapp-account-resolver.service';
 import { WhatsAppOutboundService } from './whatsapp-outbound.service';
 import { WhatsAppSignatureService } from './whatsapp-signature.service';
@@ -133,7 +135,8 @@ describe('WhatsApp webhook -> AI orchestration -> outbound reply (e2e)', () => {
     whatsAppSendText = vi.fn().mockImplementation(async () => ({ externalMessageId: `wamid.${randomUUID()}` }));
     const whatsAppOutbound = new WhatsAppOutboundService(prisma, messageService, { sendText: whatsAppSendText } as unknown as WhatsAppSendService);
     const instagramOutbound = new InstagramOutboundService(prisma, messageService, { sendText: vi.fn() } as unknown as InstagramSendService);
-    const dispatcher = new ChannelOutboundDispatcher(prisma, whatsAppOutbound, instagramOutbound);
+    const messengerOutbound = new MessengerOutboundService(prisma, messageService, { sendText: vi.fn() } as unknown as MessengerSendService);
+    const dispatcher = new ChannelOutboundDispatcher(prisma, whatsAppOutbound, instagramOutbound, messengerOutbound);
 
     const registry = new ToolRegistry();
     registry.register(createSendMessageTool(dispatcher));

@@ -41,11 +41,9 @@ export interface ChannelOutboundAdapterResult {
   failureReason?: string;
 }
 
-// Implemented by WhatsAppOutboundService and InstagramOutboundService
-// as-is (structural typing — see the `readonly channel` field added to
-// each). A future MessengerOutboundService needs only that same field plus
-// a matching sendText() to join ChannelOutboundDispatcher's registry; no
-// change to the dispatcher itself.
+// Implemented by WhatsAppOutboundService, InstagramOutboundService, and
+// MessengerOutboundService as-is (structural typing — see the `readonly
+// channel` field added to each).
 export interface ChannelOutboundAdapter {
   readonly channel: ChannelKey;
   sendText(input: ChannelOutboundTextInput): Promise<ChannelOutboundAdapterResult>;

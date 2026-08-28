@@ -4,6 +4,7 @@ packages:
 allowBuilds:
   '@google/genai': true
   '@prisma/engines': true
+  argon2: true
   esbuild: true
   prisma: true
   protobufjs: true

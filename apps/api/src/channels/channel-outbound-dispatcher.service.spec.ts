@@ -7,6 +7,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import { ChannelOutboundDispatcher } from './channel-outbound-dispatcher.service';
 import { UnsupportedOutboundChannelException } from './channel-outbound.errors';
 import type { InstagramOutboundService } from './instagram/instagram-outbound.service';
+import type { MessengerOutboundService } from './messenger/messenger-outbound.service';
 import type { WhatsAppOutboundService } from './whatsapp/whatsapp-outbound.service';
 
 const CLINIC_ID = 'clinic-1';
@@ -49,6 +50,7 @@ function buildDispatcher(opts: {
   conversation?: { channelKey: ChannelKey } | null;
   whatsAppSendText?: ReturnType<typeof vi.fn>;
   instagramSendText?: ReturnType<typeof vi.fn>;
+  messengerSendText?: ReturnType<typeof vi.fn>;
 }) {
   const findFirst = vi
     .fn()
@@ -58,12 +60,15 @@ function buildDispatcher(opts: {
   const whatsAppSendText = opts.whatsAppSendText ?? vi.fn().mockResolvedValue({ message: fakeMessage(), delivered: true });
   const instagramSendText =
     opts.instagramSendText ?? vi.fn().mockResolvedValue({ message: fakeMessage({ channelKey: ChannelKey.INSTAGRAM }), delivered: true });
+  const messengerSendText =
+    opts.messengerSendText ?? vi.fn().mockResolvedValue({ message: fakeMessage({ channelKey: ChannelKey.MESSENGER }), delivered: true });
 
   const whatsAppOutbound = { channel: ChannelKey.WHATSAPP, sendText: whatsAppSendText } as unknown as WhatsAppOutboundService;
   const instagramOutbound = { channel: ChannelKey.INSTAGRAM, sendText: instagramSendText } as unknown as InstagramOutboundService;
+  const messengerOutbound = { channel: ChannelKey.MESSENGER, sendText: messengerSendText } as unknown as MessengerOutboundService;
 
-  const dispatcher = new ChannelOutboundDispatcher(prisma, whatsAppOutbound, instagramOutbound);
-  return { dispatcher, findFirst, whatsAppSendText, instagramSendText };
+  const dispatcher = new ChannelOutboundDispatcher(prisma, whatsAppOutbound, instagramOutbound, messengerOutbound);
+  return { dispatcher, findFirst, whatsAppSendText, instagramSendText, messengerSendText };
 }
 
 describe('ChannelOutboundDispatcher', () => {
@@ -72,25 +77,42 @@ describe('ChannelOutboundDispatcher', () => {
   });
 
   it('1. a WhatsApp conversation delegates to WhatsAppOutboundService', async () => {
-    const { dispatcher, whatsAppSendText, instagramSendText } = buildDispatcher({ conversation: { channelKey: ChannelKey.WHATSAPP } });
+    const { dispatcher, whatsAppSendText, instagramSendText, messengerSendText } = buildDispatcher({ conversation: { channelKey: ChannelKey.WHATSAPP } });
 
     await dispatcher.sendText({ clinicId: CLINIC_ID, conversationId: CONVERSATION_ID, text: 'hi', senderType: 'AI' });
 
     expect(whatsAppSendText).toHaveBeenCalledTimes(1);
     expect(instagramSendText).not.toHaveBeenCalled();
+    expect(messengerSendText).not.toHaveBeenCalled();
   });
 
   it('2. an Instagram conversation delegates to InstagramOutboundService', async () => {
-    const { dispatcher, whatsAppSendText, instagramSendText } = buildDispatcher({ conversation: { channelKey: ChannelKey.INSTAGRAM } });
+    const { dispatcher, whatsAppSendText, instagramSendText, messengerSendText } = buildDispatcher({ conversation: { channelKey: ChannelKey.INSTAGRAM } });
 
     await dispatcher.sendText({ clinicId: CLINIC_ID, conversationId: CONVERSATION_ID, text: 'hi', senderType: 'AI' });
 
     expect(instagramSendText).toHaveBeenCalledTimes(1);
     expect(whatsAppSendText).not.toHaveBeenCalled();
+    expect(messengerSendText).not.toHaveBeenCalled();
   });
 
-  it('3. an unsupported channel (e.g. MESSENGER, not yet registered) is rejected safely', async () => {
-    const { dispatcher } = buildDispatcher({ conversation: { channelKey: ChannelKey.MESSENGER } });
+  it('3. a Messenger conversation delegates to MessengerOutboundService', async () => {
+    const { dispatcher, whatsAppSendText, instagramSendText, messengerSendText } = buildDispatcher({ conversation: { channelKey: ChannelKey.MESSENGER } });
+
+    await dispatcher.sendText({ clinicId: CLINIC_ID, conversationId: CONVERSATION_ID, text: 'hi', senderType: 'AI' });
+
+    expect(messengerSendText).toHaveBeenCalledTimes(1);
+    expect(whatsAppSendText).not.toHaveBeenCalled();
+    expect(instagramSendText).not.toHaveBeenCalled();
+  });
+
+  it('3b. an unsupported/unregistered channel is rejected safely', async () => {
+    // ChannelKey today only has WHATSAPP/INSTAGRAM/MESSENGER, all three
+    // registered — so exercising the "no adapter found" branch itself
+    // needs a channel value outside that enum, cast the same way an
+    // unexpected future enum addition would arrive at runtime before its
+    // own adapter is registered.
+    const { dispatcher } = buildDispatcher({ conversation: { channelKey: 'SMS' as ChannelKey } });
 
     await expect(dispatcher.sendText({ clinicId: CLINIC_ID, conversationId: CONVERSATION_ID, text: 'hi', senderType: 'AI' })).rejects.toBeInstanceOf(
       UnsupportedOutboundChannelException,
@@ -98,7 +120,7 @@ describe('ChannelOutboundDispatcher', () => {
   });
 
   it('4. a conversation belonging to another clinic (or that does not exist) is rejected as not found', async () => {
-    const { dispatcher, findFirst, whatsAppSendText, instagramSendText } = buildDispatcher({ conversation: null });
+    const { dispatcher, findFirst, whatsAppSendText, instagramSendText, messengerSendText } = buildDispatcher({ conversation: null });
 
     await expect(dispatcher.sendText({ clinicId: CLINIC_ID, conversationId: CONVERSATION_ID, text: 'hi', senderType: 'AI' })).rejects.toBeInstanceOf(
       ConversationNotFoundException,
@@ -109,6 +131,7 @@ describe('ChannelOutboundDispatcher', () => {
     );
     expect(whatsAppSendText).not.toHaveBeenCalled();
     expect(instagramSendText).not.toHaveBeenCalled();
+    expect(messengerSendText).not.toHaveBeenCalled();
   });
 
   it('5. recipient identification comes only from the persisted conversation — never from a caller-supplied field', async () => {
@@ -198,6 +221,21 @@ describe('ChannelOutboundDispatcher', () => {
     expect(result.delivered).toBe(false);
     expect(result.failureReason).toBe('Instagram rejected this message.');
     expect(result.channel).toBe(ChannelKey.INSTAGRAM);
+  });
+
+  it('10c. a Messenger provider failure propagates as the safe result the adapter already returns (never a raw Meta error)', async () => {
+    const messengerSendText = vi.fn().mockResolvedValue({
+      message: fakeMessage({ channelKey: ChannelKey.MESSENGER, deliveryStatus: MessageDeliveryStatus.FAILED, failureMessage: 'Messenger rejected this message.' }),
+      delivered: false,
+      failureReason: 'Messenger rejected this message.',
+    });
+    const { dispatcher } = buildDispatcher({ conversation: { channelKey: ChannelKey.MESSENGER }, messengerSendText });
+
+    const result = await dispatcher.sendText({ clinicId: CLINIC_ID, conversationId: CONVERSATION_ID, text: 'hi', senderType: 'AI' });
+
+    expect(result.delivered).toBe(false);
+    expect(result.failureReason).toBe('Messenger rejected this message.');
+    expect(result.channel).toBe(ChannelKey.MESSENGER);
   });
 
   it('10b. an unexpected (rethrown) provider error propagates unchanged rather than being swallowed', async () => {

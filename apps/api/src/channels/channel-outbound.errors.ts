@@ -5,10 +5,9 @@ import { BadRequestException } from '@nestjs/common';
 // specific message, never a raw internal detail.
 //
 // Thrown only when a Conversation's channelKey has no registered adapter in
-// ChannelOutboundDispatcher (e.g. MESSENGER, before that adapter exists) —
-// a real, currently-unsupported channel, not a malformed/unknown one
-// (that case is ConversationNotFoundException, reused as-is from the
-// Messaging Core).
+// ChannelOutboundDispatcher — a real, currently-unsupported channel, not a
+// malformed/unknown one (that case is ConversationNotFoundException,
+// reused as-is from the Messaging Core).
 export class UnsupportedOutboundChannelException extends BadRequestException {
   constructor(channelKey: string) {
     super(`Outbound sending is not yet supported for channel "${channelKey}".`);
