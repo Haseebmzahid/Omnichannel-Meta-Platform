@@ -60,3 +60,77 @@ not adopt it in v1** — treat it as an optional later integration, gated on roa
 - Whether per-webhook-object callback URLs are independently configurable in the current App Dashboard (**C4** —
   affects whether one shared endpoint or three are used at the infrastructure level; the adapter abstraction in
   [ADR-001](../adr/ADR-001-channel-adapter-architecture.md) works either way, but deployment config differs).
+
+## Inbound media (attachments) contract (VERIFIED 2026-08-28 — prerequisite for Task 7-9)
+
+Fetched directly from Meta's own current developer documentation specifically to unblock Task 7-9 (inbound
+media persistence), which STOPPED on an earlier attempt because this exact contract was undocumented.
+`messenger.normalizer.ts`/`messenger.types.ts` remain untouched by this verification pass — this section is
+research only. Instagram's Page-linked path shares this exact same webhook event shape (see
+`instagram-messaging.md`'s own media section, which cross-references this one rather than duplicating it).
+
+### Webhook envelope (EXISTING REPO CONTRACT — unchanged, VERIFIED against
+`developers.facebook.com/docs/messenger-platform/reference/webhook-events/messages/`)
+
+```json
+{
+  "object": "page",
+  "entry": [{
+    "id": "<PAGE_ID>",
+    "time": 1518479195594,
+    "messaging": [{
+      "sender": { "id": "<PSID>" },
+      "recipient": { "id": "<PAGE_ID>" },
+      "timestamp": 1518479195308,
+      "message": { "mid": "...", "attachments": [ /* see below */ ] }
+    }]
+  }]
+}
+```
+This is exactly the shape `MessengerWebhookPayload`/`MessengerMessagingEvent`/`MessengerMessage` already model
+(`sender.id`, `recipient.id`, `timestamp`, `message.mid`) — no envelope change needed; only
+`MessengerMessage.attachments` (currently typed `unknown[]`, deliberately unparsed) needs a real shape.
+
+### Attachment object (VERIFIED)
+
+```json
+{ "type": "image", "payload": { "url": "..." } }
+```
+`type` is one of (per Meta's reference): `image`, `audio`, `video`, `file`, `sticker`, `reel`, `ig_reel`,
+`post`, `ig_post`, `appointment_booking`, `fallback`, `template`. For **media persistence** (Task 7-9's
+scope), the relevant types are `image`, `audio`, `video`, `file` (the generic document-equivalent — Messenger
+has no separate "document" type name), and `sticker`.
+
+- `payload.url` — present on every media-relevant type; the resource location.
+- `payload.sticker_id` — present only on `sticker` attachments (a persistent sticker identifier, e.g.
+  `369239263222822`), in addition to `payload.url`.
+- Meta's own reference notes a **90-day transition period, through 2026-08-30**, during which *"both the
+  `sticker` and `image` attachment types are present"* for the same sticker content — a caveat to carry
+  forward, not something to resolve in this doc.
+
+### No MIME type or file size is provided (VERIFIED absence — genuine capability gap vs. WhatsApp)
+
+Unlike WhatsApp's `mime_type`/`sha256`/`id` fields, Meta's Messenger attachment reference documents **no**
+MIME-type, file-size, or content-hash field anywhere on the attachment object — only the coarse `type` string
+(`image`/`audio`/`video`/`file`/`sticker`). Any `Attachment.mime` value for a Messenger/Instagram-sourced
+attachment would have to come from the downloaded response's own `Content-Type` header, not the webhook
+payload — there is nothing else to read it from.
+
+### Not established / unknown
+
+- **Download authentication for `payload.url` is not confirmed by Meta's own reachable documentation.** Neither
+  the webhook-events/messages reference nor the Saving Assets guide (`docs/messenger-platform/send-messages/
+  saving-assets`) states whether fetching this URL requires a page access token (as a query parameter, per
+  Messenger's general API-auth convention) or is a directly-fetchable pre-signed CDN link needing no extra
+  auth. This repo's own already-VERIFIED note in `instagram-messaging.md` ("media is not fetched by
+  authenticated ID the way WhatsApp media is") is consistent with the latter, and multiple third-party
+  implementer reports describe fetching it directly with no token — but this is not independently confirmed
+  from Meta's own documentation and must be checked against a real webhook payload/live request before
+  implementation.
+- Exact expiration time for `payload.url`, if any (WhatsApp's is documented as 5 minutes; no equivalent figure
+  found for Messenger/Instagram's attachment URLs).
+
+### Sources
+
+- https://developers.facebook.com/docs/messenger-platform/reference/webhook-events/messages/
+- https://developers.facebook.com/docs/messenger-platform/send-messages/saving-assets

@@ -1,8 +1,12 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { AiModule } from '../../ai/ai.module';
 import { config } from '../../config';
+import { MEDIA_STORAGE, type MediaStorage } from '../../media/media-storage.interface';
+import { MediaStorageModule } from '../../media/media-storage.module';
+import { MessageService } from '../../messaging/message.service';
 import { MessagingModule } from '../../messaging/messaging.module';
 import { InstagramAccountResolverService } from './instagram-account-resolver.service';
+import { InstagramMediaIngestService } from './instagram-media.service';
 import { InstagramOutboundService } from './instagram-outbound.service';
 import { InstagramSendService } from './instagram-send.service';
 import { InstagramSignatureService } from './instagram-signature.service';
@@ -31,7 +35,7 @@ import { InstagramWebhookVerificationService } from './instagram-webhook-verific
 // imports this module for InstagramOutboundService — see
 // ai.module.ts's header comment for the full cycle this closes.
 @Module({
-  imports: [MessagingModule, forwardRef(() => AiModule)],
+  imports: [MessagingModule, forwardRef(() => AiModule), MediaStorageModule],
   controllers: [InstagramWebhookController],
   providers: [
     { provide: InstagramSignatureService, useFactory: () => new InstagramSignatureService(config.INSTAGRAM_APP_SECRET) },
@@ -46,6 +50,14 @@ import { InstagramWebhookVerificationService } from './instagram-webhook-verific
     {
       provide: InstagramSendService,
       useFactory: () => new InstagramSendService(config.INSTAGRAM_ACCESS_TOKEN, config.INSTAGRAM_API_VERSION),
+    },
+    // Task 7-9 — direct payload.url download, no channel config needed
+    // (unlike WhatsApp's token-gated flow) — just MEDIA_STORAGE/MessageService
+    // via normal Nest DI.
+    {
+      provide: InstagramMediaIngestService,
+      useFactory: (mediaStorage: MediaStorage, messageService: MessageService) => new InstagramMediaIngestService(mediaStorage, messageService),
+      inject: [MEDIA_STORAGE, MessageService],
     },
     InstagramOutboundService,
   ],

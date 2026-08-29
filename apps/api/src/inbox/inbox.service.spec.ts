@@ -1,11 +1,12 @@
 import 'reflect-metadata';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChannelOutboundDispatcher } from '../channels/channel-outbound-dispatcher.service';
-import { ChannelKey, ConversationMode, ConversationStatus, MessageDeliveryStatus, MessageDirection, MessageSenderType } from '../generated/prisma/enums';
+import { AttachmentType, ChannelKey, ConversationMode, ConversationStatus, MessageDeliveryStatus, MessageDirection, MessageSenderType } from '../generated/prisma/enums';
+import type { MediaStorage } from '../media/media-storage.interface';
 import type { ConversationService } from '../messaging/conversation.service';
 import type { MessageService } from '../messaging/message.service';
 import type { PrismaService } from '../prisma/prisma.service';
-import { StaffNotFoundException } from './inbox.errors';
+import { AttachmentNotFoundException, StaffNotFoundException } from './inbox.errors';
 import { InboxService } from './inbox.service';
 
 const CLINIC_ID = 'clinic-1';
@@ -45,6 +46,7 @@ function buildService(
     conversationService?: Partial<Record<keyof ConversationService, ReturnType<typeof vi.fn>>>;
     messageService?: Partial<Record<keyof MessageService, ReturnType<typeof vi.fn>>>;
     dispatcher?: Partial<Record<keyof ChannelOutboundDispatcher, ReturnType<typeof vi.fn>>>;
+    mediaStorage?: Partial<Record<keyof MediaStorage, ReturnType<typeof vi.fn>>>;
     staffLookupResult?: unknown;
   } = {},
 ) {
@@ -64,6 +66,14 @@ function buildService(
 
   const messageService = {
     getConversationMessages: vi.fn().mockResolvedValue({ messages: [], nextCursor: null }),
+    getAttachmentForClinic: vi.fn().mockResolvedValue({
+      id: 'attachment-1',
+      type: AttachmentType.IMAGE,
+      storageRef: 'clinics/clinic-1/messages/message-1/attachments/attachment-1',
+      mime: 'image/jpeg',
+      bytes: 1000,
+      caption: null,
+    }),
     ...overrides.messageService,
   } as unknown as MessageService;
 
@@ -78,11 +88,17 @@ function buildService(
     ...overrides.dispatcher,
   } as unknown as ChannelOutboundDispatcher;
 
+  const mediaStorage = {
+    getSignedReadUrl: vi.fn().mockResolvedValue('https://storage.example.test/signed-url'),
+    ...overrides.mediaStorage,
+  } as unknown as MediaStorage;
+
   return {
-    service: new InboxService(prisma, conversationService, messageService, dispatcher),
+    service: new InboxService(prisma, conversationService, messageService, dispatcher, mediaStorage),
     conversationService,
     messageService,
     dispatcher,
+    mediaStorage,
     findFirst,
   };
 }
@@ -245,6 +261,48 @@ describe('InboxService', () => {
       const result = await service.reply(CLINIC_ID, CONVERSATION_ID, STAFF_ID, 'hello');
 
       expect(Object.keys(result).sort()).toEqual(['channel', 'delivered', 'deliveryStatus', 'failureReason', 'messageId'].sort());
+    });
+  });
+
+  // Task 7-9 — the authenticated media endpoint's own service method.
+  describe('getAttachmentSignedUrl', () => {
+    it('resolves the attachment through MessageService.getAttachmentForClinic using the trusted clinicId, then signs its storageRef', async () => {
+      const { service, messageService, mediaStorage } = buildService();
+
+      const result = await service.getAttachmentSignedUrl(CLINIC_ID, 'attachment-1');
+
+      expect(messageService.getAttachmentForClinic).toHaveBeenCalledWith(CLINIC_ID, 'attachment-1');
+      expect(mediaStorage.getSignedReadUrl).toHaveBeenCalledWith('clinics/clinic-1/messages/message-1/attachments/attachment-1', 300);
+      expect(result).toEqual({ url: 'https://storage.example.test/signed-url', expiresInSeconds: 300 });
+    });
+
+    it('rejects with AttachmentNotFoundException for an unknown attachment id — never calls MediaStorage', async () => {
+      const { service, mediaStorage } = buildService({ messageService: { getAttachmentForClinic: vi.fn().mockResolvedValue(null) } });
+
+      await expect(service.getAttachmentSignedUrl(CLINIC_ID, 'unknown-id')).rejects.toBeInstanceOf(AttachmentNotFoundException);
+      expect(mediaStorage.getSignedReadUrl).not.toHaveBeenCalled();
+    });
+
+    it('rejects with AttachmentNotFoundException — same response — for an attachment belonging to another clinic', async () => {
+      // getAttachmentForClinic itself is clinic-scoped and returns null for
+      // a cross-clinic id (see message.service.spec.ts's own coverage of
+      // that method) — this proves InboxService surfaces that as the same
+      // safe "not found", never a different error that would reveal the
+      // attachment exists elsewhere.
+      const { service } = buildService({ messageService: { getAttachmentForClinic: vi.fn().mockResolvedValue(null) } });
+
+      await expect(service.getAttachmentSignedUrl('some-other-clinic', 'attachment-1')).rejects.toBeInstanceOf(AttachmentNotFoundException);
+    });
+
+    it('never fabricates a signed URL for an attachment with no storageRef', async () => {
+      const { service, mediaStorage } = buildService({
+        messageService: {
+          getAttachmentForClinic: vi.fn().mockResolvedValue({ id: 'attachment-2', type: AttachmentType.IMAGE, storageRef: null, mime: null, bytes: null, caption: null }),
+        },
+      });
+
+      await expect(service.getAttachmentSignedUrl(CLINIC_ID, 'attachment-2')).rejects.toBeInstanceOf(AttachmentNotFoundException);
+      expect(mediaStorage.getSignedReadUrl).not.toHaveBeenCalled();
     });
   });
 });

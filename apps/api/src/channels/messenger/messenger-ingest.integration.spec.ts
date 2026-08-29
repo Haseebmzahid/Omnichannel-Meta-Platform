@@ -11,6 +11,7 @@ import { ConversationService } from '../../messaging/conversation.service';
 import { IdentityResolutionService } from '../../messaging/identity-resolution.service';
 import { MessageService } from '../../messaging/message.service';
 import { MessengerAccountResolverService } from './messenger-account-resolver.service';
+import type { MessengerMediaIngestService } from './messenger-media.service';
 import { MessengerSignatureService } from './messenger-signature.service';
 import { MessengerWebhookController } from './messenger-webhook.controller';
 import { MessengerWebhookVerificationService } from './messenger-webhook-verification.service';
@@ -86,6 +87,10 @@ describe('Messenger inbound webhook -> Messaging Core (integration)', () => {
     // ai/tools/send-message.tool.integration.spec.ts — a no-op fake here
     // keeps that concern out of this file's assertions.
     const inboundAiService = { processInboundMessage: vi.fn().mockResolvedValue(null) } as unknown as InboundAiService;
+    // Task 7-9: this file proves the inbound text -> Messaging Core flow;
+    // media ingestion is proven separately in messenger-media.service.spec.ts
+    // — a no-op fake here keeps that concern out of this file's assertions.
+    const mediaIngestService = { ingest: vi.fn().mockResolvedValue(undefined) } as unknown as MessengerMediaIngestService;
 
     controller = new MessengerWebhookController(
       new MessengerWebhookVerificationService('unused-in-this-test'),
@@ -93,6 +98,7 @@ describe('Messenger inbound webhook -> Messaging Core (integration)', () => {
       new MessengerAccountResolverService(PAGE_ID, clinic.id),
       messageService,
       inboundAiService,
+      mediaIngestService,
     );
   });
 

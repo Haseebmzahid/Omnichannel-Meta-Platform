@@ -78,3 +78,90 @@ Phase 1B submission.
   summaries.
 - Exact App Review evidence requirements for each permission at current submission time.
 - Data-deletion callback requirements for a Live-mode app.
+
+## Inbound media contract (VERIFIED 2026-08-28 — prerequisite for Task 7-9)
+
+Fetched directly from Meta's own current developer documentation (not third-party summaries — see Sources
+below) specifically to unblock Task 7-9 (inbound media persistence), which STOPPED on an earlier attempt because
+this exact contract was undocumented. `whatsapp.normalizer.ts`/`whatsapp.types.ts` remain untouched by this
+verification pass — this section is research only.
+
+### Webhook envelope (EXISTING REPO CONTRACT — unchanged)
+
+A media message arrives in the identical `entry[].changes[].value.messages[]` envelope this repo's
+`WhatsAppChangeValue`/`WhatsAppMessage` types already model for text (same `metadata.phone_number_id`,
+`contacts[].wa_id`/`profile.name`, `messages[].id`/`from`/`timestamp`). Only `messages[].type` and the
+type-named nested object change — e.g. a text message carries `message.text.body`; an image message carries
+`message.image` (below) instead, with `message.type === "image"`. No new envelope-level field is needed.
+
+### Per-type media object (VERIFIED — fetched from
+`developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/{type}`)
+
+| Type | Fields (all VERIFIED present) | Notes |
+|---|---|---|
+| `image` | `id`, `mime_type`, `sha256`, `caption`?, `url`? | `caption` only when the sender attached one |
+| `video` | `id`, `mime_type`, `sha256`, `caption`?, `url`? | same shape as `image` |
+| `audio` | `id`, `mime_type`, `sha256`, `voice`, `url`? | `voice: true` — a WhatsApp voice-note recording |
+| `document` | `id`, `mime_type`, `sha256`, `filename`, `caption`?, `url`? | only media type carrying a `filename` |
+| `sticker` | `id`, `mime_type`, `sha256`, `animated`, `url`? | `mime_type` is `image/webp` |
+
+Example (`image`, fetched verbatim from Meta's reference page):
+```json
+{
+  "type": "image",
+  "image": {
+    "caption": "Taj Mahal",
+    "mime_type": "image/jpeg",
+    "sha256": "SfInY0gGKTsJlUWbwxC1k+FAD0FZHvzwfpvO0zX0GUI=",
+    "id": "1003383421387256",
+    "url": "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=133..."
+  }
+}
+```
+
+### The `url` field — NOT safe to assume present (VERIFIED caveat, quoted directly)
+
+Every one of the five media reference pages carries this identical sentence: *"This JSON property is being
+released to developers gradually over several weeks, starting November 12, 2025, and may not be available to
+you immediately."* Any implementation MUST treat `url` as optional and always be able to fall back to the
+`id`-based Retrieve Media URL flow below — never assume `url` is present just because it's documented.
+
+### Retrieve Media URL + download (VERIFIED, fetched from
+`developers.facebook.com/docs/whatsapp/cloud-api/reference/media`)
+
+1. `GET https://graph.facebook.com/<API_VERSION>/<MEDIA_ID>?phone_number_id=<BUSINESS_PHONE_NUMBER_ID>`
+   (`phone_number_id` is optional — validates the media belongs to that business number), header
+   `Authorization: Bearer <ACCESS_TOKEN>` (the same `WHATSAPP_ACCESS_TOKEN` outbound sends already use — see
+   `packages/config`). Response: `{ messaging_product, url, mime_type, sha256, file_size, id }`.
+2. **`url` expires after 5 minutes** — download promptly, or re-query for a fresh one.
+3. Download: `GET <url>`, header `Authorization: Bearer <ACCESS_TOKEN>` — **required**; Meta's own doc states
+   *"If you omit your token, the request will fail."*
+
+### Mapping to this repo's existing schema (EXISTING REPO CONTRACT — no migration needed)
+
+`docs/architecture/01-domain-model.md`'s `Attachment.type` enum (`image|video|audio|document|voice|sticker`)
+already fits every WhatsApp media type above with zero schema change. `audio.voice` is exactly the
+discriminator this repo's `AttachmentType.AUDIO` vs `AttachmentType.VOICE` split was defined for — a WhatsApp
+`audio` message with `voice: true` maps to `VOICE`, `voice: false`/absent maps to `AUDIO`. `mime_type` → 
+`Attachment.mime`, `sha256`/`id` are metadata this schema does not have a dedicated column for today (see
+"Not established" below), `caption`/`filename` → `Attachment.caption` (schema has no separate filename column).
+
+### Not established / unknown
+
+- Whether the **new, gradually-rolled-out inline `url` field** (on `image`/`video`/`audio`/`document`/`sticker`
+  objects, live since 2025-11-12) requires the **same** `Authorization: Bearer` header as the classic
+  Retrieve-Media-URL response's `url` — the per-type reference pages document the field's existence and rollout
+  status but do not restate the download-auth requirement specifically for it. Both fields share the same
+  `lookaside.fbsbx.com` host, so treating it as requiring the same Bearer token is the safe assumption, but this
+  is not independently reconfirmed and should be checked against a real payload before relying on it.
+- Whether `Attachment.storage_ref`'s schema should ever persist WhatsApp's own `sha256`/`file_size`/media `id` —
+  today's schema has no column for them; out of this doc's scope to decide (no schema change requested by this task).
+
+### Sources
+
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/image
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/video
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/audio
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/document
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/sticker
+- https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media

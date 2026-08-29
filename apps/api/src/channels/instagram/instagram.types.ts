@@ -34,6 +34,17 @@ export interface InstagramMessagingEvent {
   message?: InstagramMessage;
 }
 
+// Task 7-9 — verified directly against Meta's own current developer docs
+// (docs/meta/instagram-messaging.md's "Inbound media (attachments)
+// contract" section, fetched 2026-08-28) — the exact same shared event
+// shape Messenger uses (see ../messenger/messenger.types.ts's own
+// InstagramAttachment-equivalent). No mime_type/file_size field exists —
+// only `type` and `payload.url` (plus `payload.sticker_id` for stickers).
+export interface InstagramAttachment {
+  type?: string;
+  payload?: { url?: string; sticker_id?: string };
+}
+
 export interface InstagramMessage {
   /** Meta message id — externalMessageId, the idempotency key alongside channelAccountRef. */
   mid?: string;
@@ -41,7 +52,7 @@ export interface InstagramMessage {
   text?: string;
   /** True when this event is an echo of a message this system itself sent via the API — never treated as inbound. */
   is_echo?: boolean;
-  /** Present for image/audio/video/file/story_mention/etc — not parsed further in this slice. */
-  attachments?: unknown[];
+  /** Present for image/audio/video/file/story_mention/etc — see InstagramAttachment above. */
+  attachments?: InstagramAttachment[];
   reply_to?: { mid?: string };
 }

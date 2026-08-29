@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InboundAiService } from '../../ai/inbound-ai.service';
 import { MessageService } from '../../messaging/message.service';
 import { InstagramAccountResolverService } from './instagram-account-resolver.service';
+import { InstagramMediaIngestService } from './instagram-media.service';
 import { InstagramSignatureService } from './instagram-signature.service';
 import { InstagramWebhookController } from './instagram-webhook.controller';
 import { InstagramWebhookVerificationService } from './instagram-webhook-verification.service';
@@ -62,7 +63,10 @@ describe('InstagramWebhookController (HTTP)', () => {
   let processInboundMessage: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
-    ingestInboundMessage = vi.fn().mockResolvedValue({ created: true });
+    // Task 7-9: the controller now reads ingestResult.message.id (to pass
+    // to InstagramMediaIngestService when a media ref is present) — see
+    // whatsapp-webhook.controller.spec.ts's identical comment.
+    ingestInboundMessage = vi.fn().mockResolvedValue({ created: true, message: { id: 'message-1' } });
     // AI triggering itself (Task 4C-8) is proven in inbound-ai.service.spec.ts
     // and the ai/tools/send-message.tool.integration.spec.ts full-stack test
     // — this file only proves the controller calls it, not what it does.
@@ -79,6 +83,7 @@ describe('InstagramWebhookController (HTTP)', () => {
         },
         { provide: MessageService, useValue: { ingestInboundMessage } },
         { provide: InboundAiService, useValue: { processInboundMessage } },
+        { provide: InstagramMediaIngestService, useValue: { ingest: vi.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -149,7 +154,7 @@ describe('InstagramWebhookController (HTTP)', () => {
     // ../whatsapp/whatsapp-webhook.controller.spec.ts exactly (the same
     // channel-neutral trigger point, no per-channel AI logic).
     expect(processInboundMessage).toHaveBeenCalledTimes(1);
-    expect(processInboundMessage).toHaveBeenCalledWith({ created: true });
+    expect(processInboundMessage).toHaveBeenCalledWith({ created: true, message: { id: 'message-1' } });
   });
 
   it('5. a request body modified after signing fails signature verification', async () => {

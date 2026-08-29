@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InboundAiService } from '../../ai/inbound-ai.service';
 import { MessageService } from '../../messaging/message.service';
 import { MessengerAccountResolverService } from './messenger-account-resolver.service';
+import { MessengerMediaIngestService } from './messenger-media.service';
 import { MessengerSignatureService } from './messenger-signature.service';
 import { MessengerWebhookController } from './messenger-webhook.controller';
 import { MessengerWebhookVerificationService } from './messenger-webhook-verification.service';
@@ -81,7 +82,10 @@ describe('MessengerWebhookController (HTTP)', () => {
   let processInboundMessage: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
-    ingestInboundMessage = vi.fn().mockResolvedValue({ created: true });
+    // Task 7-9: the controller now reads ingestResult.message.id (to pass
+    // to MessengerMediaIngestService when a media ref is present) — see
+    // whatsapp-webhook.controller.spec.ts's identical comment.
+    ingestInboundMessage = vi.fn().mockResolvedValue({ created: true, message: { id: 'message-1' } });
     reconcileOutboundDeliveryStatus = vi.fn().mockResolvedValue({ message: null, applied: false });
     // AI triggering itself (Task 4C-8) is proven in inbound-ai.service.spec.ts
     // and the ai/tools/send-message.tool.integration.spec.ts full-stack test
@@ -99,6 +103,7 @@ describe('MessengerWebhookController (HTTP)', () => {
         },
         { provide: MessageService, useValue: { ingestInboundMessage, reconcileOutboundDeliveryStatus } },
         { provide: InboundAiService, useValue: { processInboundMessage } },
+        { provide: MessengerMediaIngestService, useValue: { ingest: vi.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -151,7 +156,7 @@ describe('MessengerWebhookController (HTTP)', () => {
       }),
     );
     expect(processInboundMessage).toHaveBeenCalledTimes(1);
-    expect(processInboundMessage).toHaveBeenCalledWith({ created: true });
+    expect(processInboundMessage).toHaveBeenCalledWith({ created: true, message: { id: 'message-1' } });
   });
 
   it('4. an invalid signature is rejected and never reaches MessageService (or AI processing)', async () => {

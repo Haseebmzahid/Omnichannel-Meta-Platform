@@ -44,6 +44,34 @@ export interface WhatsAppContact {
   profile?: { name?: string };
 }
 
+// Task 7-9 — verified directly against Meta's own current developer docs
+// (docs/meta/whatsapp-cloud-api.md's "Inbound media contract" section,
+// fetched 2026-08-28). `url` is a gradually-rolled-out field (live since
+// 2025-11-12) — never assume it is present; the media-id-based Retrieve
+// Media URL flow (whatsapp-media.service.ts) is the reliable path.
+export interface WhatsAppMediaObject {
+  id?: string;
+  mime_type?: string;
+  sha256?: string;
+  caption?: string;
+  url?: string;
+}
+
+export interface WhatsAppDocumentObject extends WhatsAppMediaObject {
+  /** The only media type carrying a filename — VERIFIED. */
+  filename?: string;
+}
+
+export interface WhatsAppAudioObject extends WhatsAppMediaObject {
+  /** true for a WhatsApp voice-note recording — VERIFIED. Maps to this repo's AttachmentType.VOICE vs .AUDIO split. */
+  voice?: boolean;
+}
+
+export interface WhatsAppStickerObject extends WhatsAppMediaObject {
+  /** true for an animated sticker — VERIFIED. mime_type is always image/webp. */
+  animated?: boolean;
+}
+
 export interface WhatsAppMessage {
   /** Meta message id — externalMessageId, the idempotency key alongside channelAccountRef. */
   id?: string;
@@ -54,6 +82,11 @@ export interface WhatsAppMessage {
   type?: string;
   context?: { id?: string };
   text?: { body?: string };
+  image?: WhatsAppMediaObject;
+  video?: WhatsAppMediaObject;
+  audio?: WhatsAppAudioObject;
+  document?: WhatsAppDocumentObject;
+  sticker?: WhatsAppStickerObject;
   /** Present on "unsupported" (and similar) message types — not parsed further in this slice. */
   errors?: Array<{ code?: number; title?: string }>;
 }

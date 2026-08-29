@@ -11,6 +11,7 @@ import { ConversationService } from '../../messaging/conversation.service';
 import { IdentityResolutionService } from '../../messaging/identity-resolution.service';
 import { MessageService } from '../../messaging/message.service';
 import { InstagramAccountResolverService } from './instagram-account-resolver.service';
+import type { InstagramMediaIngestService } from './instagram-media.service';
 import { InstagramSignatureService } from './instagram-signature.service';
 import { InstagramWebhookController } from './instagram-webhook.controller';
 import { InstagramWebhookVerificationService } from './instagram-webhook-verification.service';
@@ -85,6 +86,10 @@ describe('Instagram inbound webhook -> Messaging Core (integration)', () => {
     // ai/tools/send-message.tool.integration.spec.ts — a no-op fake here
     // keeps that concern out of this file's assertions.
     const inboundAiService = { processInboundMessage: vi.fn().mockResolvedValue(null) } as unknown as InboundAiService;
+    // Task 7-9: this file proves the inbound text -> Messaging Core flow;
+    // media ingestion is proven separately in instagram-media.service.spec.ts
+    // — a no-op fake here keeps that concern out of this file's assertions.
+    const mediaIngestService = { ingest: vi.fn().mockResolvedValue(undefined) } as unknown as InstagramMediaIngestService;
 
     controller = new InstagramWebhookController(
       new InstagramWebhookVerificationService('unused-in-this-test'),
@@ -92,6 +97,7 @@ describe('Instagram inbound webhook -> Messaging Core (integration)', () => {
       new InstagramAccountResolverService(ACCOUNT_ID, clinic.id),
       messageService,
       inboundAiService,
+      mediaIngestService,
     );
   });
 

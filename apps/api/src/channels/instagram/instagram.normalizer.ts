@@ -1,7 +1,7 @@
-import { ChannelKey, MessageContentType } from '../../generated/prisma/enums';
+import { AttachmentType, ChannelKey, MessageContentType } from '../../generated/prisma/enums';
 import { logger } from '../../logging/logger';
 import type { NormalizedInboundMessage } from '../../messaging/messaging.types';
-import type { InstagramMessage, InstagramMessagingEvent, InstagramWebhookPayload } from './instagram.types';
+import type { InstagramAttachment, InstagramMessage, InstagramMessagingEvent, InstagramWebhookPayload } from './instagram.types';
 
 // Instagram payload -> NormalizedInboundMessage. This is the one place that
 // is allowed to know Instagram's payload shape
@@ -57,33 +57,89 @@ export function normalizeInstagramInboundMessage(event: InstagramMessagingEvent,
   }
 
   const message = event.message;
-  if (!isSupportedTextMessage(message)) {
+  if (!message?.mid || message.is_echo) {
     logger.info({ clinicId, hasMessage: Boolean(message) }, 'Instagram: skipping non-text/unsupported messaging event');
     return null;
   }
 
-  return {
+  const base = {
     clinicId,
     channelKey: ChannelKey.INSTAGRAM,
     channelAccountRef: recipientId,
     externalContactId: senderId,
     externalThreadKey: senderId,
     externalMessageId: message.mid,
-    direction: 'INBOUND',
-    contentType: MessageContentType.TEXT,
-    text: message.text,
+    direction: 'INBOUND' as const,
     replyToExternalMessageId: message.reply_to?.mid,
     receivedAt: parseTimestamp(event.timestamp),
-    channelMeta: { igMessageType: 'text' },
   };
+
+  if (typeof message.text === 'string') {
+    return { ...base, contentType: MessageContentType.TEXT, text: message.text, channelMeta: { igMessageType: 'text' } };
+  }
+
+  // Task 7-9 — image/video/audio/file/sticker attachments: the media bytes
+  // are downloaded/uploaded separately (instagram-media.service.ts, invoked
+  // by the controller directly from event.message.attachments — no separate
+  // ref-extraction map needed the way WhatsApp's batch shape requires, since
+  // the controller already has this same `event` in scope). Only the FIRST
+  // supported attachment on a message is persisted — see this file's final
+  // report for that documented scope limitation.
+  const descriptor = getInstagramMediaDescriptor(message.attachments);
+  if (descriptor) {
+    return { ...base, contentType: MessageContentType.MEDIA, text: DEFAULT_MEDIA_TEXT[descriptor.kind], channelMeta: { igMessageType: descriptor.kind } };
+  }
+
+  logger.info({ clinicId, hasMessage: Boolean(message) }, 'Instagram: skipping non-text/unsupported messaging event');
+  return null;
 }
 
-// A supported event: has a message id, is not an echo of our own outbound
-// send, and carries plain text (never attachments-only, in this slice).
-function isSupportedTextMessage(message: InstagramMessage | undefined): message is InstagramMessage & { mid: string; text: string } {
-  if (!message?.mid) return false;
-  if (message.is_echo) return false;
-  return typeof message.text === 'string';
+// --- Task 7-9: media descriptor extraction --------------------------------
+
+export type InstagramMediaKind = 'image' | 'video' | 'audio' | 'file' | 'sticker';
+
+export interface InstagramMediaRef {
+  url: string;
+  attachmentType: AttachmentType;
+}
+
+const DEFAULT_MEDIA_TEXT: Record<InstagramMediaKind, string> = {
+  image: '[Image]',
+  video: '[Video]',
+  audio: '[Audio]',
+  file: '[File]',
+  sticker: '[Sticker]',
+};
+
+const ATTACHMENT_TYPE_MAP: Record<InstagramMediaKind, AttachmentType> = {
+  image: AttachmentType.IMAGE,
+  video: AttachmentType.VIDEO,
+  audio: AttachmentType.AUDIO,
+  file: AttachmentType.DOCUMENT,
+  sticker: AttachmentType.STICKER,
+};
+
+function isInstagramMediaKind(type: string | undefined): type is InstagramMediaKind {
+  return type === 'image' || type === 'video' || type === 'audio' || type === 'file' || type === 'sticker';
+}
+
+// Picks the first attachment (of possibly several) whose type this system
+// downloads/persists, and that actually carries a payload.url — anything
+// else (reel/ig_reel/post/ig_post/appointment_booking/fallback/template, or
+// a supported type missing its url) is left for a future task.
+function getInstagramMediaDescriptor(attachments: InstagramAttachment[] | undefined): { kind: InstagramMediaKind; url: string } | null {
+  for (const attachment of attachments ?? []) {
+    if (attachment && isInstagramMediaKind(attachment.type) && typeof attachment.payload?.url === 'string') {
+      return { kind: attachment.type, url: attachment.payload.url };
+    }
+  }
+  return null;
+}
+
+/** Exported for instagram-media.service.ts: derives the download ref (and Attachment.type mapping) from a raw event's attachments, or null if none is supported. */
+export function extractInstagramMediaRef(message: InstagramMessage | undefined): InstagramMediaRef | null {
+  const descriptor = getInstagramMediaDescriptor(message?.attachments);
+  return descriptor ? { url: descriptor.url, attachmentType: ATTACHMENT_TYPE_MAP[descriptor.kind] } : null;
 }
 
 function parseTimestamp(timestamp: number | undefined): Date {

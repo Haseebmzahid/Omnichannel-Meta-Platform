@@ -85,12 +85,24 @@ export interface InboxConversationDetail {
   updatedAt: string;
 }
 
+// Task 7-9 — storageRef is deliberately NOT exposed here (it was, before
+// this task, when nothing yet consumed it): it's an internal object-storage
+// key, not something the browser has any use for now that
+// GET /inbox/attachments/:id exists — the frontend fetches a signed URL by
+// attachment id instead. Keeps this endpoint's response minimal, per that
+// route's own "never expose raw storage configuration" requirement.
 export interface InboxAttachmentDto {
   id: string;
   type: AttachmentType;
-  storageRef: string | null;
   mime: string | null;
   caption: string | null;
+}
+
+// What GET /inbox/attachments/:attachmentId returns — a short-lived,
+// credential-free URL, never the bucket/storageRef/credentials themselves.
+export interface InboxAttachmentUrlDto {
+  url: string;
+  expiresInSeconds: number;
 }
 
 // Task 7-1, section 4's explicit field list.

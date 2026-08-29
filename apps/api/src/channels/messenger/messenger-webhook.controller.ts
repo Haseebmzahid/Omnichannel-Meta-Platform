@@ -6,7 +6,13 @@ import { logger } from '../../logging/logger';
 import { MessageService } from '../../messaging/message.service';
 import { MessengerAccountResolverService } from './messenger-account-resolver.service';
 import { MessengerInvalidSignatureException } from './messenger.errors';
-import { extractMessengerMessagingEvents, normalizeMessengerDeliveries, normalizeMessengerInboundMessage } from './messenger.normalizer';
+import { MessengerMediaIngestService } from './messenger-media.service';
+import {
+  extractMessengerMediaRef,
+  extractMessengerMessagingEvents,
+  normalizeMessengerDeliveries,
+  normalizeMessengerInboundMessage,
+} from './messenger.normalizer';
 import { MessengerSignatureService } from './messenger-signature.service';
 import { MessengerWebhookVerificationService } from './messenger-webhook-verification.service';
 
@@ -31,6 +37,7 @@ export class MessengerWebhookController {
     private readonly accountResolver: MessengerAccountResolverService,
     private readonly messageService: MessageService,
     private readonly inboundAiService: InboundAiService,
+    private readonly mediaIngestService: MessengerMediaIngestService,
   ) {}
 
   // GET webhook verification: Meta calls this once when the subscription is
@@ -92,6 +99,15 @@ export class MessengerWebhookController {
           // webhook's 200 acknowledgment.
           const ingestResult = await this.messageService.ingestInboundMessage(normalized);
           await this.inboundAiService.processInboundMessage(ingestResult);
+
+          // Task 7-9 — same "new message only, after persistence" rule as
+          // WhatsApp's controller; event.message is already in scope here.
+          if (ingestResult.created) {
+            const mediaRef = extractMessengerMediaRef(event.message);
+            if (mediaRef) {
+              await this.mediaIngestService.ingest(clinicId, ingestResult.message.id, mediaRef);
+            }
+          }
         }
       }
 

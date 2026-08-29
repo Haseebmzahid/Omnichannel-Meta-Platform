@@ -11,6 +11,7 @@ import { IdentityResolutionService } from '../../messaging/identity-resolution.s
 import { MessageService } from '../../messaging/message.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WhatsAppAccountResolverService } from './whatsapp-account-resolver.service';
+import type { WhatsAppMediaIngestService } from './whatsapp-media.service';
 import { WhatsAppSignatureService } from './whatsapp-signature.service';
 import { WhatsAppWebhookController } from './whatsapp-webhook.controller';
 import { WhatsAppWebhookVerificationService } from './whatsapp-webhook-verification.service';
@@ -102,6 +103,10 @@ describe('WhatsApp status webhook -> Messaging Core (integration)', () => {
     });
 
     const inboundAiService = { processInboundMessage: vi.fn().mockResolvedValue(null) } as unknown as InboundAiService;
+    // Task 7-9: media ingestion is proven separately in
+    // whatsapp-media-ingest.integration.spec.ts — a no-op fake here keeps
+    // that concern out of this file's own (status-callback) assertions.
+    const mediaIngestService = { ingest: vi.fn().mockResolvedValue(undefined) } as unknown as WhatsAppMediaIngestService;
 
     controller = new WhatsAppWebhookController(
       new WhatsAppWebhookVerificationService('unused-in-this-test'),
@@ -109,6 +114,7 @@ describe('WhatsApp status webhook -> Messaging Core (integration)', () => {
       new WhatsAppAccountResolverService(PHONE_NUMBER_ID, clinic.id),
       messageService,
       inboundAiService,
+      mediaIngestService,
     );
   });
 

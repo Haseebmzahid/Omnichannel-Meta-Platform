@@ -1,4 +1,4 @@
-import { ChannelKey, MessageContentType, MessageDeliveryStatus } from '../../generated/prisma/enums';
+import { AttachmentType, ChannelKey, MessageContentType, MessageDeliveryStatus } from '../../generated/prisma/enums';
 import { logger } from '../../logging/logger';
 import type { NormalizedInboundMessage, OutboundDeliveryStatusUpdate } from '../../messaging/messaging.types';
 import type { WhatsAppChangeValue, WhatsAppMessage, WhatsAppStatus, WhatsAppWebhookPayload } from './whatsapp.types';
@@ -68,28 +68,136 @@ function normalizeOneMessage(
     return null;
   }
 
-  if (message.type !== 'text' || typeof message.text?.body !== 'string') {
-    // Unsupported message type for this slice (image/audio/location/
-    // reaction/unsupported/...) — acknowledge safely, no Message row.
-    logger.info({ phoneNumberId, messageType: message.type }, 'WhatsApp: skipping unsupported inbound message type');
-    return null;
-  }
-
-  return {
+  const base = {
     clinicId,
     channelKey: ChannelKey.WHATSAPP,
     channelAccountRef: phoneNumberId,
     externalContactId: message.from,
     externalThreadKey: message.from,
     externalMessageId: message.id,
-    direction: 'INBOUND',
+    direction: 'INBOUND' as const,
     senderDisplayName: displayNameByWaId.get(message.from),
-    contentType: MessageContentType.TEXT,
-    text: message.text.body,
     replyToExternalMessageId: message.context?.id,
     receivedAt: parseTimestamp(message.timestamp),
-    channelMeta: { waMessageType: message.type },
   };
+
+  if (message.type === 'text' && typeof message.text?.body === 'string') {
+    return {
+      ...base,
+      contentType: MessageContentType.TEXT,
+      text: message.text.body,
+      channelMeta: { waMessageType: message.type },
+    };
+  }
+
+  // Task 7-9 — image/video/audio/document/sticker: the media bytes
+  // themselves are downloaded/uploaded separately (whatsapp-media.service.ts,
+  // invoked by the controller via extractWhatsAppMediaRef below, after this
+  // Message row is already persisted) — this function only ever describes
+  // the Message row, never performs I/O, staying synchronous and pure like
+  // every other branch here.
+  const descriptor = getWhatsAppMediaDescriptor(message);
+  if (descriptor) {
+    return {
+      ...base,
+      contentType: MessageContentType.MEDIA,
+      text: descriptor.caption ?? DEFAULT_MEDIA_TEXT[descriptor.kind],
+      channelMeta: { waMessageType: message.type },
+    };
+  }
+
+  // Unsupported message type for this slice (location/contacts/interactive/
+  // reaction/order/system/unsupported/...) — acknowledge safely, no Message row.
+  logger.info({ phoneNumberId, messageType: message.type }, 'WhatsApp: skipping unsupported inbound message type');
+  return null;
+}
+
+// --- Task 7-9: media descriptor extraction --------------------------------
+
+export type WhatsAppMediaKind = 'image' | 'video' | 'audio' | 'voice' | 'document' | 'sticker';
+
+// What whatsapp-media.service.ts needs to run the media-id retrieval flow
+// (docs/meta/whatsapp-cloud-api.md's "Retrieve Media URL + download") —
+// deliberately WhatsApp-specific (mediaId is a Meta concept), never passed
+// into MessageService/NormalizedInboundMessage.
+export interface WhatsAppMediaRef {
+  externalMessageId: string;
+  mediaId: string;
+  attachmentType: AttachmentType;
+  caption?: string;
+  filename?: string;
+}
+
+const DEFAULT_MEDIA_TEXT: Record<WhatsAppMediaKind, string> = {
+  image: '[Image]',
+  video: '[Video]',
+  audio: '[Audio]',
+  voice: '[Voice message]',
+  document: '[Document]',
+  sticker: '[Sticker]',
+};
+
+function getWhatsAppMediaDescriptor(
+  message: WhatsAppMessage,
+): { kind: WhatsAppMediaKind; attachmentType: AttachmentType; mediaId: string; caption?: string; filename?: string } | null {
+  switch (message.type) {
+    case 'image':
+      return message.image?.id
+        ? { kind: 'image', attachmentType: AttachmentType.IMAGE, mediaId: message.image.id, caption: message.image.caption }
+        : null;
+    case 'video':
+      return message.video?.id
+        ? { kind: 'video', attachmentType: AttachmentType.VIDEO, mediaId: message.video.id, caption: message.video.caption }
+        : null;
+    case 'audio':
+      return message.audio?.id
+        ? {
+            kind: message.audio.voice ? 'voice' : 'audio',
+            attachmentType: message.audio.voice ? AttachmentType.VOICE : AttachmentType.AUDIO,
+            mediaId: message.audio.id,
+          }
+        : null;
+    case 'document':
+      return message.document?.id
+        ? {
+            kind: 'document',
+            attachmentType: AttachmentType.DOCUMENT,
+            mediaId: message.document.id,
+            caption: message.document.caption,
+            filename: message.document.filename,
+          }
+        : null;
+    case 'sticker':
+      return message.sticker?.id ? { kind: 'sticker', attachmentType: AttachmentType.STICKER, mediaId: message.sticker.id } : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Extracts the WhatsApp-specific media reference for every message in this
+ * webhook `value` that carries a downloadable media object, keyed by the
+ * Meta message id (externalMessageId) — the same key
+ * normalizeWhatsAppInboundMessages() puts on the NormalizedInboundMessage it
+ * returns for that same message, letting the controller pair "the message I
+ * just persisted" with "what to download for it" without threading a
+ * WhatsApp-specific field through the channel-neutral contract.
+ */
+export function extractWhatsAppMediaRefs(value: WhatsAppChangeValue): Map<string, WhatsAppMediaRef> {
+  const refs = new Map<string, WhatsAppMediaRef>();
+  for (const message of value.messages ?? []) {
+    if (!message?.id) continue;
+    const descriptor = getWhatsAppMediaDescriptor(message);
+    if (!descriptor) continue;
+    refs.set(message.id, {
+      externalMessageId: message.id,
+      mediaId: descriptor.mediaId,
+      attachmentType: descriptor.attachmentType,
+      caption: descriptor.caption,
+      filename: descriptor.filename,
+    });
+  }
+  return refs;
 }
 
 /**

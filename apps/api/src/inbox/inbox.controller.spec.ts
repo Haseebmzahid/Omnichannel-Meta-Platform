@@ -10,6 +10,7 @@ import type { InboxService } from './inbox.service';
 const CLINIC_ID = randomUUID();
 const CONVERSATION_ID = randomUUID();
 const STAFF_ID = randomUUID();
+const ATTACHMENT_ID = randomUUID();
 
 function staffContext(overrides: Partial<AuthenticatedStaffContext> = {}): AuthenticatedStaffContext {
   return { staffId: STAFF_ID, clinicId: CLINIC_ID, role: StaffRole.AGENT, ...overrides };
@@ -24,6 +25,7 @@ function buildController(overrides: Partial<Record<keyof InboxService, ReturnTyp
     markRead: vi.fn().mockResolvedValue({ id: CONVERSATION_ID }),
     takeover: vi.fn().mockResolvedValue({ id: CONVERSATION_ID }),
     updateStatus: vi.fn().mockResolvedValue({ id: CONVERSATION_ID }),
+    getAttachmentSignedUrl: vi.fn().mockResolvedValue({ url: 'https://storage.example.test/signed-url', expiresInSeconds: 300 }),
     ...overrides,
   } as unknown as InboxService;
 
@@ -152,5 +154,47 @@ describe('InboxController — HTTP-boundary validation and authenticated-identit
     expect(inboxService.getConversation).toHaveBeenCalled();
     expect(inboxService.getMessages).toHaveBeenCalled();
     expect(inboxService.markRead).toHaveBeenCalled();
+  });
+
+  // Task 7-9 — the authenticated media endpoint.
+  describe('getAttachmentUrl', () => {
+    it('rejects a non-UUID attachmentId with a sanitized 400', async () => {
+      const { controller } = buildController();
+
+      await expect(controller.getAttachmentUrl(staffContext(), 'not-a-uuid')).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('never reaches InboxService when the attachmentId is invalid', async () => {
+      const { controller, inboxService } = buildController();
+
+      await expect(controller.getAttachmentUrl(staffContext(), 'not-a-uuid')).rejects.toThrow();
+      expect(inboxService.getAttachmentSignedUrl).not.toHaveBeenCalled();
+    });
+
+    it('delegates to InboxService using the authenticated clinicId, never a caller-supplied one', async () => {
+      const { controller, inboxService } = buildController();
+
+      await controller.getAttachmentUrl(staffContext(), ATTACHMENT_ID);
+
+      expect(inboxService.getAttachmentSignedUrl).toHaveBeenCalledWith(CLINIC_ID, ATTACHMENT_ID);
+    });
+
+    it('a different authenticated clinicId scopes the lookup to that clinic', async () => {
+      const { controller, inboxService } = buildController();
+      const otherClinicId = randomUUID();
+
+      await controller.getAttachmentUrl(staffContext({ clinicId: otherClinicId }), ATTACHMENT_ID);
+
+      expect(inboxService.getAttachmentSignedUrl).toHaveBeenCalledWith(otherClinicId, ATTACHMENT_ID);
+    });
+
+    it('READ_ONLY staff can view an attachment — viewing media is a read, not a mutation', async () => {
+      const { controller, inboxService } = buildController();
+
+      const result = await controller.getAttachmentUrl(staffContext({ role: StaffRole.READ_ONLY }), ATTACHMENT_ID);
+
+      expect(inboxService.getAttachmentSignedUrl).toHaveBeenCalled();
+      expect(result).toEqual({ url: 'https://storage.example.test/signed-url', expiresInSeconds: 300 });
+    });
   });
 });

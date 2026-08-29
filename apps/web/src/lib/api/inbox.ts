@@ -3,6 +3,7 @@ import type {
   ConversationStatus,
   CursorPage,
   GetMessagesParams,
+  InboxAttachmentUrlDto,
   InboxConversationDetail,
   InboxConversationSummary,
   InboxMessageDto,
@@ -52,4 +53,10 @@ export function takeover(conversationId: string): Promise<InboxConversationDetai
 
 export function updateStatus(conversationId: string, status: ConversationStatus): Promise<InboxConversationDetail> {
   return apiFetch<InboxConversationDetail>(`/inbox/conversations/${conversationId}/status`, { method: 'PATCH', body: { status } });
+}
+
+// Task 7-9 — a short-lived signed URL for one attachment, never the raw
+// storage key/credentials. GET /inbox/attachments/:attachmentId.
+export function getAttachmentUrl(attachmentId: string): Promise<InboxAttachmentUrlDto> {
+  return apiFetch<InboxAttachmentUrlDto>(`/inbox/attachments/${attachmentId}`);
 }

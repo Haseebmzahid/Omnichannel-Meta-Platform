@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { ChannelOutboundModule } from '../channels/channel-outbound.module';
+import { MediaStorageModule } from '../media/media-storage.module';
 import { MessagingModule } from '../messaging/messaging.module';
 import { InboxController } from './inbox.controller';
 import { InboxService } from './inbox.service';
@@ -25,7 +26,7 @@ import { InboxService } from './inbox.service';
 // applies via @UseGuards (Task 7-2) — authenticated identity, not a
 // client-supplied clinicId/staffId, is what every route below scopes to.
 @Module({
-  imports: [AuthModule, MessagingModule, ChannelOutboundModule],
+  imports: [AuthModule, MessagingModule, ChannelOutboundModule, MediaStorageModule],
   controllers: [InboxController],
   providers: [InboxService],
   exports: [InboxService],

@@ -20,6 +20,7 @@ import type { InstagramSendService } from '../instagram/instagram-send.service';
 import { MessengerOutboundService } from '../messenger/messenger-outbound.service';
 import type { MessengerSendService } from '../messenger/messenger-send.service';
 import { WhatsAppAccountResolverService } from './whatsapp-account-resolver.service';
+import type { WhatsAppMediaIngestService } from './whatsapp-media.service';
 import { WhatsAppOutboundService } from './whatsapp-outbound.service';
 import { WhatsAppSignatureService } from './whatsapp-signature.service';
 import { WhatsAppWebhookController } from './whatsapp-webhook.controller';
@@ -145,6 +146,12 @@ describe('WhatsApp webhook -> AI orchestration -> outbound reply (e2e)', () => {
     const provider = new FakeAIProvider(AI_REPLY_TEXT);
     const orchestrator = new AiOrchestratorService(provider, registry);
     const inboundAiService = new InboundAiService(aiContextService, orchestrator);
+    // Task 7-9: this file proves the inbound -> AI -> outbound-reply flow;
+    // media ingestion is proven separately in
+    // whatsapp-media-ingest.integration.spec.ts — a no-op fake here (every
+    // fixture in this file is text-only, so no media ref is ever produced)
+    // keeps that concern out of this file's assertions.
+    const mediaIngestService = { ingest: vi.fn().mockResolvedValue(undefined) } as unknown as WhatsAppMediaIngestService;
 
     controller = new WhatsAppWebhookController(
       new WhatsAppWebhookVerificationService('unused-in-this-test'),
@@ -152,6 +159,7 @@ describe('WhatsApp webhook -> AI orchestration -> outbound reply (e2e)', () => {
       new WhatsAppAccountResolverService(PHONE_NUMBER_ID, clinic.id),
       messageService,
       inboundAiService,
+      mediaIngestService,
     );
   });
 
@@ -213,6 +221,7 @@ describe('WhatsApp webhook -> AI orchestration -> outbound reply (e2e)', () => {
       new WhatsAppAccountResolverService(PHONE_NUMBER_ID, clinic.id),
       messageService,
       otherInboundAiService,
+      { ingest: vi.fn().mockResolvedValue(undefined) } as unknown as WhatsAppMediaIngestService,
     );
 
     const externalMessageId = `wamid.${randomUUID()}`;

@@ -11,6 +11,7 @@ import { ConversationService } from '../../messaging/conversation.service';
 import { IdentityResolutionService } from '../../messaging/identity-resolution.service';
 import { MessageService } from '../../messaging/message.service';
 import { WhatsAppAccountResolverService } from './whatsapp-account-resolver.service';
+import type { WhatsAppMediaIngestService } from './whatsapp-media.service';
 import { WhatsAppSignatureService } from './whatsapp-signature.service';
 import { WhatsAppWebhookController } from './whatsapp-webhook.controller';
 import { WhatsAppWebhookVerificationService } from './whatsapp-webhook-verification.service';
@@ -86,6 +87,11 @@ describe('WhatsApp inbound webhook -> Messaging Core (integration)', () => {
     // ai/tools/send-message.tool.integration.spec.ts — a no-op fake here
     // keeps that concern out of this file's assertions.
     const inboundAiService = { processInboundMessage: vi.fn().mockResolvedValue(null) } as unknown as InboundAiService;
+    // Task 7-9: media ingestion is proven separately in
+    // whatsapp-media-ingest.integration.spec.ts — a no-op fake here (every
+    // fixture in this file is text-only, so no media ref is ever produced)
+    // keeps that concern out of this file's assertions.
+    const mediaIngestService = { ingest: vi.fn().mockResolvedValue(undefined) } as unknown as WhatsAppMediaIngestService;
 
     controller = new WhatsAppWebhookController(
       new WhatsAppWebhookVerificationService('unused-in-this-test'),
@@ -93,6 +99,7 @@ describe('WhatsApp inbound webhook -> Messaging Core (integration)', () => {
       new WhatsAppAccountResolverService(PHONE_NUMBER_ID, clinic.id),
       messageService,
       inboundAiService,
+      mediaIngestService,
     );
   });
 

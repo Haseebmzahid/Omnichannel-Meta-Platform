@@ -1,8 +1,12 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { AiModule } from '../../ai/ai.module';
 import { config } from '../../config';
+import { MEDIA_STORAGE, type MediaStorage } from '../../media/media-storage.interface';
+import { MediaStorageModule } from '../../media/media-storage.module';
+import { MessageService } from '../../messaging/message.service';
 import { MessagingModule } from '../../messaging/messaging.module';
 import { WhatsAppAccountResolverService } from './whatsapp-account-resolver.service';
+import { WhatsAppMediaIngestService } from './whatsapp-media.service';
 import { WhatsAppOutboundService } from './whatsapp-outbound.service';
 import { WhatsAppSendService } from './whatsapp-send.service';
 import { WhatsAppSignatureService } from './whatsapp-signature.service';
@@ -35,7 +39,7 @@ import { WhatsAppWebhookVerificationService } from './whatsapp-webhook-verificat
 // through this same module) — see ai.module.ts's header comment for the
 // full explanation.
 @Module({
-  imports: [MessagingModule, forwardRef(() => AiModule)],
+  imports: [MessagingModule, forwardRef(() => AiModule), MediaStorageModule],
   controllers: [WhatsAppWebhookController],
   providers: [
     { provide: WhatsAppSignatureService, useFactory: () => new WhatsAppSignatureService(config.WHATSAPP_APP_SECRET) },
@@ -51,6 +55,16 @@ import { WhatsAppWebhookVerificationService } from './whatsapp-webhook-verificat
       provide: WhatsAppSendService,
       useFactory: () =>
         new WhatsAppSendService(config.WHATSAPP_ACCESS_TOKEN, config.WHATSAPP_PHONE_NUMBER_ID, config.WHATSAPP_API_VERSION),
+    },
+    // Task 7-9 — the media-ID retrieval + download flow. Same
+    // config-factory pattern as WhatsAppSendService above; MEDIA_STORAGE
+    // and MessageService are resolved through normal Nest DI (MediaStorageModule
+    // and MessagingModule are both imported into this module).
+    {
+      provide: WhatsAppMediaIngestService,
+      useFactory: (mediaStorage: MediaStorage, messageService: MessageService) =>
+        new WhatsAppMediaIngestService(config.WHATSAPP_ACCESS_TOKEN, config.WHATSAPP_API_VERSION, mediaStorage, messageService),
+      inject: [MEDIA_STORAGE, MessageService],
     },
     WhatsAppOutboundService,
   ],

@@ -1,7 +1,14 @@
 import 'reflect-metadata';
 import { describe, expect, it } from 'vitest';
-import { ChannelKey, MessageContentType, MessageDeliveryStatus } from '../../generated/prisma/enums';
-import { extractWhatsAppMessageChanges, normalizeWhatsAppInboundMessages, normalizeWhatsAppStatuses } from './whatsapp.normalizer';
+import { AttachmentType, ChannelKey, MessageContentType, MessageDeliveryStatus } from '../../generated/prisma/enums';
+import {
+  ALL_WHATSAPP_MEDIA_WEBHOOK_FIXTURES,
+  WHATSAPP_DOCUMENT_WEBHOOK,
+  WHATSAPP_IMAGE_WEBHOOK,
+  WHATSAPP_STICKER_WEBHOOK,
+  WHATSAPP_VOICE_NOTE_WEBHOOK,
+} from './__fixtures__/whatsapp-media-webhook.fixture';
+import { extractWhatsAppMediaRefs, extractWhatsAppMessageChanges, normalizeWhatsAppInboundMessages, normalizeWhatsAppStatuses } from './whatsapp.normalizer';
 import type { WhatsAppChangeValue, WhatsAppWebhookPayload } from './whatsapp.types';
 
 const CLINIC_ID = 'clinic-uuid';
@@ -151,6 +158,81 @@ describe('normalizeWhatsAppInboundMessages', () => {
       messages: [{ id: 'wamid.TEST1', from: '15550002222', type: 'text', text: { body: 'hi' } }],
     };
     expect(normalizeWhatsAppInboundMessages(value, CLINIC_ID)).toEqual([]);
+  });
+
+  // Task 7-9 — updated from the prerequisite verification pass's own test:
+  // that pass proved these real-shaped media payloads were safely SKIPPED
+  // (no media persistence existed yet). Now that WhatsAppMediaIngestService
+  // exists, these same fixtures must normalize to a real MEDIA message
+  // instead — the Message row itself never depends on the (separate,
+  // async) download step succeeding. See __fixtures__/
+  // whatsapp-media-webhook.fixture.ts and docs/meta/whatsapp-cloud-api.md's
+  // "Inbound media contract" section.
+  it('9. every real-shaped media webhook (image/voice-note/document/sticker) normalizes to a MEDIA message, never throws', () => {
+    for (const payload of ALL_WHATSAPP_MEDIA_WEBHOOK_FIXTURES) {
+      const [value] = extractWhatsAppMessageChanges(payload);
+      expect(value).toBeDefined();
+      expect(() => normalizeWhatsAppInboundMessages(value as WhatsAppChangeValue, CLINIC_ID)).not.toThrow();
+
+      const [normalized] = normalizeWhatsAppInboundMessages(value as WhatsAppChangeValue, CLINIC_ID);
+      expect(normalized?.contentType).toBe(MessageContentType.MEDIA);
+      expect(normalized?.text).toBeTruthy();
+    }
+  });
+
+  it('10. a caption on image/document is used as the message text; other types fall back to a default label', () => {
+    const [imageValue] = extractWhatsAppMessageChanges(WHATSAPP_IMAGE_WEBHOOK);
+    const [image] = normalizeWhatsAppInboundMessages(imageValue as WhatsAppChangeValue, CLINIC_ID);
+    expect(image?.text).toBe('Taj Mahal'); // the fixture's own caption
+
+    const [stickerValue] = extractWhatsAppMessageChanges(WHATSAPP_STICKER_WEBHOOK);
+    const [sticker] = normalizeWhatsAppInboundMessages(stickerValue as WhatsAppChangeValue, CLINIC_ID);
+    expect(sticker?.text).toBe('[Sticker]'); // stickers never carry a caption
+  });
+
+  it('11. a voice-note audio message (voice: true) is distinguished from a text message via channelMeta, never crashes', () => {
+    const [value] = extractWhatsAppMessageChanges(WHATSAPP_VOICE_NOTE_WEBHOOK);
+    const [normalized] = normalizeWhatsAppInboundMessages(value as WhatsAppChangeValue, CLINIC_ID);
+    expect(normalized?.text).toBe('[Voice message]');
+    expect(normalized?.channelMeta).toEqual({ waMessageType: 'audio' });
+  });
+});
+
+describe('extractWhatsAppMediaRefs', () => {
+  it('maps each media message to its mediaId/attachmentType, keyed by externalMessageId', () => {
+    const [value] = extractWhatsAppMessageChanges(WHATSAPP_IMAGE_WEBHOOK);
+    const refs = extractWhatsAppMediaRefs(value as WhatsAppChangeValue);
+
+    expect(refs.get('wamid.MEDIA_TEST')).toEqual({
+      externalMessageId: 'wamid.MEDIA_TEST',
+      mediaId: '1003383421387256',
+      attachmentType: AttachmentType.IMAGE,
+      caption: 'Taj Mahal',
+      filename: undefined,
+    });
+  });
+
+  it('maps a voice-note audio message to AttachmentType.VOICE (not AUDIO)', () => {
+    const [value] = extractWhatsAppMessageChanges(WHATSAPP_VOICE_NOTE_WEBHOOK);
+    const refs = extractWhatsAppMediaRefs(value as WhatsAppChangeValue);
+    expect(refs.get('wamid.MEDIA_TEST')?.attachmentType).toBe(AttachmentType.VOICE);
+  });
+
+  it('carries the filename for a document', () => {
+    const [value] = extractWhatsAppMessageChanges(WHATSAPP_DOCUMENT_WEBHOOK);
+    const refs = extractWhatsAppMediaRefs(value as WhatsAppChangeValue);
+    expect(refs.get('wamid.MEDIA_TEST')?.filename).toBe('receipt.pdf');
+  });
+
+  it('produces an empty map for a text-only value', () => {
+    const refs = extractWhatsAppMediaRefs(extractWhatsAppMessageChanges(textPayload())[0] as WhatsAppChangeValue);
+    expect(refs.size).toBe(0);
+  });
+
+  it('never throws on malformed/adversarial input', () => {
+    expect(() => extractWhatsAppMediaRefs({})).not.toThrow();
+    expect(extractWhatsAppMediaRefs({}).size).toBe(0);
+    expect(() => extractWhatsAppMediaRefs({ messages: [null, {}] } as unknown as WhatsAppChangeValue)).not.toThrow();
   });
 });
 

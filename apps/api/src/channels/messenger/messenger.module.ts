@@ -1,8 +1,12 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { AiModule } from '../../ai/ai.module';
 import { config } from '../../config';
+import { MEDIA_STORAGE, type MediaStorage } from '../../media/media-storage.interface';
+import { MediaStorageModule } from '../../media/media-storage.module';
+import { MessageService } from '../../messaging/message.service';
 import { MessagingModule } from '../../messaging/messaging.module';
 import { MessengerAccountResolverService } from './messenger-account-resolver.service';
+import { MessengerMediaIngestService } from './messenger-media.service';
 import { MessengerOutboundService } from './messenger-outbound.service';
 import { MessengerSendService } from './messenger-send.service';
 import { MessengerSignatureService } from './messenger-signature.service';
@@ -33,7 +37,7 @@ import { MessengerWebhookVerificationService } from './messenger-webhook-verific
 // for the full cycle this closes, and whatsapp.module.ts/instagram.module.ts
 // for the identical existing pattern.
 @Module({
-  imports: [MessagingModule, forwardRef(() => AiModule)],
+  imports: [MessagingModule, forwardRef(() => AiModule), MediaStorageModule],
   controllers: [MessengerWebhookController],
   providers: [
     { provide: MessengerSignatureService, useFactory: () => new MessengerSignatureService(config.MESSENGER_APP_SECRET) },
@@ -49,6 +53,14 @@ import { MessengerWebhookVerificationService } from './messenger-webhook-verific
       provide: MessengerSendService,
       useFactory: () =>
         new MessengerSendService(config.MESSENGER_ACCESS_TOKEN, config.MESSENGER_PAGE_ID, config.MESSENGER_API_VERSION),
+    },
+    // Task 7-9 — direct payload.url download, no channel config needed
+    // (unlike WhatsApp's token-gated flow) — just MEDIA_STORAGE/MessageService
+    // via normal Nest DI.
+    {
+      provide: MessengerMediaIngestService,
+      useFactory: (mediaStorage: MediaStorage, messageService: MessageService) => new MessengerMediaIngestService(mediaStorage, messageService),
+      inject: [MEDIA_STORAGE, MessageService],
     },
     MessengerOutboundService,
   ],

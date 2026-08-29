@@ -10,7 +10,7 @@ the corresponding adapter phase.
 |---|---|---|---|---|
 | Receive text | Yes | Yes | Yes | Normalize to `text` |
 | Send text | Yes, in 24h window | Yes, in 24h window | Yes, in 24h window | Window-aware send gate (all three enforce 24h) |
-| Receive media | Yes | Yes (URL only) | Yes | Normalize to `attachments[]` |
+| Receive media | Yes | Yes (URL only) | Yes | Normalize to `attachments[]` — field-level contract now VERIFIED 2026-08-28, see each channel doc's own "Inbound media (attachments) contract" section |
 | Send media | Yes | Yes | Yes | Adapter-specific upload/format (**VERIFY** size/format limits) |
 | Buttons/choices | Interactive reply buttons | Generic template | Template buttons | Capability descriptor drives rendering; not interchangeable across channels |
 | Quick-reply analogue | List / reply-button | Max 13, 20-char labels, not on desktop | Yes | Emit abstract `choices[]`; adapter degrades |

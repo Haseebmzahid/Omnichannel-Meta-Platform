@@ -1,7 +1,7 @@
-import { ChannelKey, MessageContentType, MessageDeliveryStatus } from '../../generated/prisma/enums';
+import { AttachmentType, ChannelKey, MessageContentType, MessageDeliveryStatus } from '../../generated/prisma/enums';
 import { logger } from '../../logging/logger';
 import type { NormalizedInboundMessage, OutboundDeliveryStatusUpdate } from '../../messaging/messaging.types';
-import type { MessengerMessage, MessengerMessagingEvent, MessengerWebhookPayload } from './messenger.types';
+import type { MessengerAttachment, MessengerMessage, MessengerMessagingEvent, MessengerWebhookPayload } from './messenger.types';
 
 // Messenger payload -> NormalizedInboundMessage / OutboundDeliveryStatusUpdate.
 // This is the one place that is allowed to know Messenger's payload shape
@@ -66,25 +66,92 @@ export function normalizeMessengerInboundMessage(event: MessengerMessagingEvent,
   }
 
   const message = event.message;
-  if (!isSupportedTextMessage(message)) {
+  if (!message?.mid || message.is_echo) {
     logger.info({ clinicId, hasMessage: Boolean(message) }, 'Messenger: skipping non-text/unsupported messaging event');
     return null;
   }
 
-  return {
+  const base = {
     clinicId,
     channelKey: ChannelKey.MESSENGER,
     channelAccountRef: recipientId,
     externalContactId: senderId,
     externalThreadKey: senderId,
     externalMessageId: message.mid,
-    direction: 'INBOUND',
-    contentType: MessageContentType.TEXT,
-    text: message.text,
+    direction: 'INBOUND' as const,
     replyToExternalMessageId: message.reply_to?.mid,
     receivedAt: parseTimestamp(event.timestamp),
-    channelMeta: { messengerMessageType: 'text' },
   };
+
+  if (typeof message.text === 'string') {
+    return { ...base, contentType: MessageContentType.TEXT, text: message.text, channelMeta: { messengerMessageType: 'text' } };
+  }
+
+  // Task 7-9 — image/video/audio/file/sticker attachments: the media bytes
+  // are downloaded/uploaded separately (messenger-media.service.ts, invoked
+  // by the controller directly from event.message.attachments). Only the
+  // FIRST supported attachment on a message is persisted — see this file's
+  // final report for that documented scope limitation.
+  const descriptor = getMessengerMediaDescriptor(message.attachments);
+  if (descriptor) {
+    return {
+      ...base,
+      contentType: MessageContentType.MEDIA,
+      text: DEFAULT_MEDIA_TEXT[descriptor.kind],
+      channelMeta: { messengerMessageType: descriptor.kind },
+    };
+  }
+
+  logger.info({ clinicId, hasMessage: Boolean(message) }, 'Messenger: skipping non-text/unsupported messaging event');
+  return null;
+}
+
+// --- Task 7-9: media descriptor extraction --------------------------------
+
+export type MessengerMediaKind = 'image' | 'video' | 'audio' | 'file' | 'sticker';
+
+export interface MessengerMediaRef {
+  url: string;
+  attachmentType: AttachmentType;
+}
+
+const DEFAULT_MEDIA_TEXT: Record<MessengerMediaKind, string> = {
+  image: '[Image]',
+  video: '[Video]',
+  audio: '[Audio]',
+  file: '[File]',
+  sticker: '[Sticker]',
+};
+
+const ATTACHMENT_TYPE_MAP: Record<MessengerMediaKind, AttachmentType> = {
+  image: AttachmentType.IMAGE,
+  video: AttachmentType.VIDEO,
+  audio: AttachmentType.AUDIO,
+  file: AttachmentType.DOCUMENT,
+  sticker: AttachmentType.STICKER,
+};
+
+function isMessengerMediaKind(type: string | undefined): type is MessengerMediaKind {
+  return type === 'image' || type === 'video' || type === 'audio' || type === 'file' || type === 'sticker';
+}
+
+// Picks the first attachment (of possibly several) whose type this system
+// downloads/persists, and that actually carries a payload.url — anything
+// else (reel/post/appointment_booking/fallback/template, or a supported
+// type missing its url) is left for a future task.
+function getMessengerMediaDescriptor(attachments: MessengerAttachment[] | undefined): { kind: MessengerMediaKind; url: string } | null {
+  for (const attachment of attachments ?? []) {
+    if (attachment && isMessengerMediaKind(attachment.type) && typeof attachment.payload?.url === 'string') {
+      return { kind: attachment.type, url: attachment.payload.url };
+    }
+  }
+  return null;
+}
+
+/** Exported for messenger-media.service.ts: derives the download ref (and Attachment.type mapping) from a raw event's attachments, or null if none is supported. */
+export function extractMessengerMediaRef(message: MessengerMessage | undefined): MessengerMediaRef | null {
+  const descriptor = getMessengerMediaDescriptor(message?.attachments);
+  return descriptor ? { url: descriptor.url, attachmentType: ATTACHMENT_TYPE_MAP[descriptor.kind] } : null;
 }
 
 /**
@@ -114,14 +181,6 @@ export function normalizeMessengerDeliveries(events: MessengerMessagingEvent[], 
     }
   }
   return updates;
-}
-
-// A supported event: has a message id, is not an echo of our own outbound
-// send, and carries plain text (never attachments-only, in this slice).
-function isSupportedTextMessage(message: MessengerMessage | undefined): message is MessengerMessage & { mid: string; text: string } {
-  if (!message?.mid) return false;
-  if (message.is_echo) return false;
-  return typeof message.text === 'string';
 }
 
 function parseTimestamp(timestamp: number | undefined): Date {

@@ -6,7 +6,13 @@ import { logger } from '../../logging/logger';
 import { MessageService } from '../../messaging/message.service';
 import { WhatsAppAccountResolverService } from './whatsapp-account-resolver.service';
 import { WhatsAppInvalidSignatureException } from './whatsapp.errors';
-import { extractWhatsAppMessageChanges, normalizeWhatsAppInboundMessages, normalizeWhatsAppStatuses } from './whatsapp.normalizer';
+import {
+  extractWhatsAppMediaRefs,
+  extractWhatsAppMessageChanges,
+  normalizeWhatsAppInboundMessages,
+  normalizeWhatsAppStatuses,
+} from './whatsapp.normalizer';
+import { WhatsAppMediaIngestService } from './whatsapp-media.service';
 import { WhatsAppSignatureService } from './whatsapp-signature.service';
 import { WhatsAppWebhookVerificationService } from './whatsapp-webhook-verification.service';
 
@@ -24,6 +30,7 @@ export class WhatsAppWebhookController {
     private readonly accountResolver: WhatsAppAccountResolverService,
     private readonly messageService: MessageService,
     private readonly inboundAiService: InboundAiService,
+    private readonly mediaIngestService: WhatsAppMediaIngestService,
   ) {}
 
   // GET webhook verification (docs/meta/whatsapp-cloud-api.md "Webhooks
@@ -73,6 +80,7 @@ export class WhatsAppWebhookController {
         continue;
       }
 
+      const mediaRefs = extractWhatsAppMediaRefs(value);
       for (const message of normalizeWhatsAppInboundMessages(value, clinicId)) {
         // Task 4C-8: persist first (the durable source of truth), then —
         // and only then — trigger the one channel-neutral AI processing
@@ -81,6 +89,19 @@ export class WhatsAppWebhookController {
         // turn never affects this webhook's 200 acknowledgment below.
         const ingestResult = await this.messageService.ingestInboundMessage(message);
         await this.inboundAiService.processInboundMessage(ingestResult);
+
+        // Task 7-9 — media download/upload happens only for a genuinely
+        // new message (never re-processed for a duplicate/idempotent
+        // delivery, which already has its attachment from the original
+        // ingest), and only after the Message row is durably persisted —
+        // see whatsapp-media.service.ts's own header comment for why this
+        // can never turn a valid webhook into a failed one.
+        if (ingestResult.created) {
+          const mediaRef = mediaRefs.get(message.externalMessageId);
+          if (mediaRef) {
+            await this.mediaIngestService.ingest(clinicId, ingestResult.message.id, mediaRef);
+          }
+        }
       }
 
       for (const update of normalizeWhatsAppStatuses(value, phoneNumberId)) {

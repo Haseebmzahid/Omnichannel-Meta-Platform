@@ -16,3 +16,16 @@ export class StaffNotFoundException extends NotFoundException {
     super(`Staff ${staffId} was not found for this clinic.`);
   }
 }
+
+// Task 7-9 — the authenticated media endpoint's own "not found" response.
+// Deliberately the same message whether the attachment id is genuinely
+// unknown, belongs to a message in another clinic, or (impossible by
+// construction — see message.service.ts's attachMediaToMessage, which
+// never creates a row without a real storageRef) has no stored media —
+// never reveals which case applies, matching this codebase's existing
+// no-cross-clinic-leakage convention.
+export class AttachmentNotFoundException extends NotFoundException {
+  constructor(attachmentId: string) {
+    super(`Attachment ${attachmentId} was not found for this clinic.`);
+  }
+}

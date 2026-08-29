@@ -4,6 +4,8 @@ import { BadRequestException } from '@nestjs/common';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Clinic, Staff } from '../generated/prisma/client';
 import {
+  AttachmentSource,
+  AttachmentType,
   ChannelKey,
   ConversationMode,
   ConversationStatus,
@@ -74,6 +76,9 @@ describe('Messaging core', () => {
   });
 
   afterAll(async () => {
+    // Attachments (Task 7-9) must be deleted before their parent Message
+    // rows — Attachment.messageId is a foreign key with no cascade.
+    await prisma.attachment.deleteMany({ where: { message: { conversation: { clinicId: { in: [clinicA.id, clinicB.id] } } } } });
     await prisma.message.deleteMany({ where: { conversation: { clinicId: { in: [clinicA.id, clinicB.id] } } } });
     await prisma.conversation.deleteMany({ where: { clinicId: { in: [clinicA.id, clinicB.id] } } });
     await prisma.channelIdentity.deleteMany({ where: { contactId: { in: [...createdContactIds] } } });
@@ -486,5 +491,79 @@ describe('Messaging core', () => {
     await expect(
       messageService.getRecentConversationMessages({ clinicId: clinicA.id, conversationId: bResult.conversation.id }),
     ).rejects.toBeInstanceOf(ConversationNotFoundException);
+  });
+
+  // Task 7-9 — media persistence: attachMediaToMessage() and
+  // getAttachmentForClinic(), both against the same real Postgres this
+  // whole file already uses.
+  describe('attachMediaToMessage / getAttachmentForClinic (Task 7-9)', () => {
+    it('24. attachMediaToMessage creates an Attachment row linked to the message, with the given fields', async () => {
+      const inbound = await ingest({ channelAccountRef: 'msgtest-24', contentType: MessageContentType.MEDIA, text: '[Image]' });
+
+      const updated = await messageService.attachMediaToMessage(inbound.message.id, {
+        type: AttachmentType.IMAGE,
+        storageRef: `clinics/${clinicA.id}/messages/${inbound.message.id}/attachments/media-24`,
+        mime: 'image/jpeg',
+        bytes: 12345,
+        caption: 'A test photo',
+        source: AttachmentSource.DOWNLOADED,
+      });
+
+      expect(updated.attachments).toHaveLength(1);
+      const attachment = updated.attachments[0]!;
+      expect(attachment.type).toBe(AttachmentType.IMAGE);
+      expect(attachment.storageRef).toBe(`clinics/${clinicA.id}/messages/${inbound.message.id}/attachments/media-24`);
+      expect(attachment.mime).toBe('image/jpeg');
+      expect(attachment.bytes).toBe(12345);
+      expect(attachment.caption).toBe('A test photo');
+      expect(attachment.source).toBe(AttachmentSource.DOWNLOADED);
+    });
+
+    it('25. an Attachment created via attachMediaToMessage appears in getConversationMessages()', async () => {
+      const inbound = await ingest({ channelAccountRef: 'msgtest-25', contentType: MessageContentType.MEDIA, text: '[Document]' });
+      await messageService.attachMediaToMessage(inbound.message.id, {
+        type: AttachmentType.DOCUMENT,
+        storageRef: `clinics/${clinicA.id}/messages/${inbound.message.id}/attachments/media-25`,
+        mime: 'application/pdf',
+        bytes: 999,
+        source: AttachmentSource.DOWNLOADED,
+      });
+
+      const page = await messageService.getConversationMessages({ clinicId: clinicA.id, conversationId: inbound.conversation.id });
+      const persisted = page.messages.find((m) => m.id === inbound.message.id);
+      expect(persisted?.attachments).toHaveLength(1);
+      expect(persisted?.attachments[0]?.type).toBe(AttachmentType.DOCUMENT);
+    });
+
+    it('26. getAttachmentForClinic resolves an attachment through its message and conversation to the owning clinic', async () => {
+      const inbound = await ingest({ channelAccountRef: 'msgtest-26' });
+      const updated = await messageService.attachMediaToMessage(inbound.message.id, {
+        type: AttachmentType.AUDIO,
+        storageRef: `clinics/${clinicA.id}/messages/${inbound.message.id}/attachments/media-26`,
+        source: AttachmentSource.DOWNLOADED,
+      });
+      const attachmentId = updated.attachments[0]!.id;
+
+      const found = await messageService.getAttachmentForClinic(clinicA.id, attachmentId);
+      expect(found?.id).toBe(attachmentId);
+    });
+
+    it('27. getAttachmentForClinic returns null for an attachment belonging to another clinic — never leaks cross-clinic', async () => {
+      const inbound = await ingest({ channelAccountRef: 'msgtest-27' });
+      const updated = await messageService.attachMediaToMessage(inbound.message.id, {
+        type: AttachmentType.AUDIO,
+        storageRef: `clinics/${clinicA.id}/messages/${inbound.message.id}/attachments/media-27`,
+        source: AttachmentSource.DOWNLOADED,
+      });
+      const attachmentId = updated.attachments[0]!.id;
+
+      const found = await messageService.getAttachmentForClinic(clinicB.id, attachmentId);
+      expect(found).toBeNull();
+    });
+
+    it('28. getAttachmentForClinic returns null for an unknown attachment id', async () => {
+      const found = await messageService.getAttachmentForClinic(clinicA.id, randomUUID());
+      expect(found).toBeNull();
+    });
   });
 });

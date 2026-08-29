@@ -93,6 +93,7 @@ describe('loadConfig', () => {
   it('accepts NODE_ENV=production when GEMINI_API_KEY is set', () => {
     const config = loadConfig({
       NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://u:p@db.example.com:5432/prod',
       GEMINI_API_KEY: 'sk-real-key',
       WHATSAPP_VERIFY_TOKEN: 'verify-token',
       WHATSAPP_APP_SECRET: 'app-secret',
@@ -133,6 +134,7 @@ describe('loadConfig', () => {
   it('accepts NODE_ENV=production when WhatsApp config is fully set', () => {
     const config = loadConfig({
       NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://u:p@db.example.com:5432/prod',
       GEMINI_API_KEY: 'test-key',
       WHATSAPP_VERIFY_TOKEN: 'verify-token',
       WHATSAPP_APP_SECRET: 'app-secret',
@@ -194,6 +196,7 @@ describe('loadConfig', () => {
   it('accepts NODE_ENV=production when Instagram config is fully set', () => {
     const config = loadConfig({
       NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://u:p@db.example.com:5432/prod',
       GEMINI_API_KEY: 'test-key',
       WHATSAPP_VERIFY_TOKEN: 'verify-token',
       WHATSAPP_APP_SECRET: 'app-secret',
@@ -265,6 +268,7 @@ describe('loadConfig', () => {
   it('accepts NODE_ENV=production when Messenger config is fully set', () => {
     const config = loadConfig({
       NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://u:p@db.example.com:5432/prod',
       GEMINI_API_KEY: 'test-key',
       WHATSAPP_VERIFY_TOKEN: 'verify-token',
       WHATSAPP_APP_SECRET: 'app-secret',
@@ -314,8 +318,103 @@ describe('loadConfig', () => {
     expect(loadConfig({ MESSENGER_API_VERSION: 'v27.0' }).MESSENGER_API_VERSION).toBe('v27.0');
   });
 
-  it('throws a clear error for an empty DATABASE_URL', () => {
-    expect(() => loadConfig({ DATABASE_URL: '' })).toThrow(/DATABASE_URL/);
+  describe('DATABASE_URL handling', () => {
+    it('uses an explicitly supplied DATABASE_URL as-is', () => {
+      const config = loadConfig({ DATABASE_URL: 'postgresql://u:p@db.example.com:5432/mydb' });
+      expect(config.DATABASE_URL).toBe('postgresql://u:p@db.example.com:5432/mydb');
+    });
+
+    it('falls back to the local Docker default in development when unset', () => {
+      const config = loadConfig({ NODE_ENV: 'development' });
+      expect(config.DATABASE_URL).toBe('postgresql://clinic:clinic_dev_password@localhost:5432/clinic_dev');
+    });
+
+    it('falls back to the local Docker default in test when unset', () => {
+      const config = loadConfig({ NODE_ENV: 'test' });
+      expect(config.DATABASE_URL).toBe('postgresql://clinic:clinic_dev_password@localhost:5432/clinic_dev');
+    });
+
+    it('treats a blank DATABASE_URL the same as unset in development (.env.example convention)', () => {
+      const config = loadConfig({ NODE_ENV: 'development', DATABASE_URL: '' });
+      expect(config.DATABASE_URL).toBe('postgresql://clinic:clinic_dev_password@localhost:5432/clinic_dev');
+    });
+
+    it('fails fast with a clear error when DATABASE_URL is missing in production', () => {
+      expect(() =>
+        loadConfig({
+          NODE_ENV: 'production',
+          GEMINI_API_KEY: 'test-key',
+          WHATSAPP_VERIFY_TOKEN: 'verify-token',
+          WHATSAPP_APP_SECRET: 'app-secret',
+          WHATSAPP_PHONE_NUMBER_ID: '1234567890',
+          WHATSAPP_CLINIC_ID: 'clinic-1',
+          WHATSAPP_ACCESS_TOKEN: 'access-token',
+          INSTAGRAM_VERIFY_TOKEN: 'ig-verify-token',
+          INSTAGRAM_APP_SECRET: 'ig-app-secret',
+          INSTAGRAM_ACCOUNT_ID: 'ig-account-1',
+          INSTAGRAM_CLINIC_ID: 'clinic-1',
+          INSTAGRAM_ACCESS_TOKEN: 'ig-access-token',
+          MESSENGER_VERIFY_TOKEN: 'msgr-verify-token',
+          MESSENGER_APP_SECRET: 'msgr-app-secret',
+          MESSENGER_PAGE_ID: 'msgr-page-1',
+          MESSENGER_CLINIC_ID: 'clinic-1',
+          MESSENGER_ACCESS_TOKEN: 'msgr-access-token',
+          AUTH_JWT_SECRET: 'a'.repeat(32),
+        }),
+      ).toThrow(/DATABASE_URL is required when NODE_ENV=production/);
+    });
+
+    it('fails fast with a clear error when DATABASE_URL is blank in production — never falls back to a local/Docker database', () => {
+      expect(() =>
+        loadConfig({
+          NODE_ENV: 'production',
+          DATABASE_URL: '',
+          GEMINI_API_KEY: 'test-key',
+          WHATSAPP_VERIFY_TOKEN: 'verify-token',
+          WHATSAPP_APP_SECRET: 'app-secret',
+          WHATSAPP_PHONE_NUMBER_ID: '1234567890',
+          WHATSAPP_CLINIC_ID: 'clinic-1',
+          WHATSAPP_ACCESS_TOKEN: 'access-token',
+          INSTAGRAM_VERIFY_TOKEN: 'ig-verify-token',
+          INSTAGRAM_APP_SECRET: 'ig-app-secret',
+          INSTAGRAM_ACCOUNT_ID: 'ig-account-1',
+          INSTAGRAM_CLINIC_ID: 'clinic-1',
+          INSTAGRAM_ACCESS_TOKEN: 'ig-access-token',
+          MESSENGER_VERIFY_TOKEN: 'msgr-verify-token',
+          MESSENGER_APP_SECRET: 'msgr-app-secret',
+          MESSENGER_PAGE_ID: 'msgr-page-1',
+          MESSENGER_CLINIC_ID: 'clinic-1',
+          MESSENGER_ACCESS_TOKEN: 'msgr-access-token',
+          AUTH_JWT_SECRET: 'a'.repeat(32),
+        }),
+      ).toThrow(/DATABASE_URL is required when NODE_ENV=production/);
+    });
+
+    it('rejects a malformed DATABASE_URL', () => {
+      expect(() => loadConfig({ DATABASE_URL: 'not-a-url' })).toThrow(/DATABASE_URL must be a valid/);
+    });
+
+    it('rejects a DATABASE_URL with the wrong protocol', () => {
+      expect(() => loadConfig({ DATABASE_URL: 'mysql://u:p@db.example.com:5432/mydb' })).toThrow(
+        /DATABASE_URL must be a valid/,
+      );
+    });
+
+    it('never includes the DATABASE_URL value, or any other secret, in a configuration error', () => {
+      let message = '';
+      try {
+        loadConfig({
+          DATABASE_URL: 'postgresql://secret_user:super_secret_password@db.internal.example.com:5432/prod',
+          AUTH_JWT_SECRET: 'too-short',
+        });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).not.toContain('super_secret_password');
+      expect(message).not.toContain('secret_user');
+      expect(message).not.toContain('db.internal.example.com');
+      expect(message).toMatch(/AUTH_JWT_SECRET/);
+    });
   });
 
   it('defaults PORT to 3000 specifically when unset', () => {
@@ -373,6 +472,7 @@ describe('loadConfig', () => {
     expect(() =>
       loadConfig({
         NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://u:p@db.example.com:5432/prod',
         GEMINI_API_KEY: 'test-key',
         WHATSAPP_VERIFY_TOKEN: 'verify-token',
         WHATSAPP_APP_SECRET: 'app-secret',

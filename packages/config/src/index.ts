@@ -1,5 +1,21 @@
 import { z } from 'zod';
 
+// Matches the local-dev fallback already baked into docker-compose.yml /
+// .env.example — not a real credential. Only ever injected by loadConfig()
+// below for NODE_ENV values other than 'production' (development and test),
+// and only when DATABASE_URL is entirely unset — an explicit DATABASE_URL
+// (any environment) always wins.
+export const LOCAL_DEV_DATABASE_URL = 'postgresql://clinic:clinic_dev_password@localhost:5432/clinic_dev';
+
+function isValidDatabaseUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'postgresql:' || url.protocol === 'postgres:';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Environment schema for the API. Only variables actually consumed today are
  * listed here — REDIS_URL, GEMINI_API_KEY, and Meta tokens are added when the
@@ -10,12 +26,18 @@ export const envSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().positive().default(3000),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-    // Default matches the local-dev fallback already baked into
-    // docker-compose.yml / .env.example — not a real credential.
+    // No default here — a same-for-every-environment default is exactly how
+    // production ends up silently talking to a local/Docker database. The
+    // local-dev fallback is applied by loadConfig() below, gated to
+    // non-production; production instead gets a required-field failure from
+    // the superRefine below when this is left unset.
     DATABASE_URL: z
       .string()
-      .min(1)
-      .default('postgresql://clinic:clinic_dev_password@localhost:5432/clinic_dev'),
+      .min(1, 'DATABASE_URL must not be empty.')
+      .refine(isValidDatabaseUrl, {
+        message: 'DATABASE_URL must be a valid postgresql:// (or postgres://) connection string.',
+      })
+      .optional(),
     // Gemini AI provider (Task 4C-6). Optional here so the app boots, and
     // existing tests run, without real credentials in development/test —
     // enforced as required only in production, below. The provider adapter
@@ -193,6 +215,15 @@ export const envSchema = z
   .superRefine((val, ctx) => {
     if (val.NODE_ENV !== 'production') return;
 
+    if (!val.DATABASE_URL) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DATABASE_URL'],
+        message:
+          'DATABASE_URL is required when NODE_ENV=production. Refusing to start — production never falls back to a local/Docker database.',
+      });
+    }
+
     if (!val.GEMINI_API_KEY) {
       ctx.addIssue({
         code: 'custom',
@@ -249,20 +280,51 @@ export const envSchema = z
     }
   });
 
-export type AppConfig = z.infer<typeof envSchema>;
+// DATABASE_URL is `.optional()` on envSchema only so the superRefine above
+// can report a dedicated, production-specific error when it's missing —
+// every environment that actually parses successfully (production with an
+// explicit value, or development/test with loadConfig()'s own fallback
+// below) always has a real string here. AppConfig reflects that guarantee
+// rather than the schema's internal `.optional()` escape hatch.
+export type AppConfig = Omit<z.infer<typeof envSchema>, 'DATABASE_URL'> & { DATABASE_URL: string };
 
 /**
  * Parses and validates process.env into a typed AppConfig. Throws a single,
  * readable error listing every invalid field — this is meant to fail loudly
- * at boot, not be caught and papered over.
+ * at boot, not be caught and papered over. Never include raw env values in
+ * that error: only field paths and static messages.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const result = envSchema.safeParse(env);
+  // .env.example documents every optional secret as a blank `KEY=` line,
+  // and dotenv loads that as an empty string, not undefined. Every optional
+  // field below means that the same way — "" is treated as not configured,
+  // exactly like the variable being absent — so a checked-out .env full of
+  // unset feature flags doesn't fail validation.
+  const effectiveEnv: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== '') {
+      effectiveEnv[key] = value;
+    }
+  }
+
+  const nodeEnv = effectiveEnv.NODE_ENV ?? 'development';
+
+  // Local development and test execution only — see LOCAL_DEV_DATABASE_URL's
+  // own comment. An explicit DATABASE_URL (e.g. a developer pointing their
+  // local run at a real database) always takes precedence; this only fills
+  // in when it's entirely unset. Production is never eligible: the
+  // superRefine above turns a missing DATABASE_URL there into a fail-fast
+  // error instead.
+  if (nodeEnv !== 'production' && !effectiveEnv.DATABASE_URL) {
+    effectiveEnv.DATABASE_URL = LOCAL_DEV_DATABASE_URL;
+  }
+
+  const result = envSchema.safeParse(effectiveEnv);
   if (!result.success) {
     const issues = result.error.issues
       .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
       .join('; ');
     throw new Error(`Invalid environment configuration — ${issues}`);
   }
-  return result.data;
+  return result.data as AppConfig;
 }

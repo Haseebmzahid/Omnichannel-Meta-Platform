@@ -47,6 +47,17 @@ export interface MessengerMessagingEvent {
   read?: MessengerRead;
 }
 
+// Task 7-9 — verified directly against Meta's own current developer docs
+// (docs/meta/facebook-messenger.md's "Inbound media (attachments)
+// contract" section, fetched 2026-08-28). No mime_type/file_size field
+// exists — only `type` and `payload.url` (plus `payload.sticker_id` for
+// stickers, per Meta's documented 90-day sticker/image transition through
+// 2026-08-30).
+export interface MessengerAttachment {
+  type?: string;
+  payload?: { url?: string; sticker_id?: string };
+}
+
 export interface MessengerMessage {
   /** Meta message id — externalMessageId, the idempotency key alongside channelAccountRef. */
   mid?: string;
@@ -54,8 +65,8 @@ export interface MessengerMessage {
   text?: string;
   /** True when this event is an echo of a message this system itself sent via the API — never treated as inbound. */
   is_echo?: boolean;
-  /** Present for image/audio/video/file/etc — not parsed further in this slice. */
-  attachments?: unknown[];
+  /** Present for image/audio/video/file/etc — see MessengerAttachment above. */
+  attachments?: MessengerAttachment[];
   reply_to?: { mid?: string };
 }
 

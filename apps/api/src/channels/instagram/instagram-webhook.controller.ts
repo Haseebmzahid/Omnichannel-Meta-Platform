@@ -6,7 +6,8 @@ import { logger } from '../../logging/logger';
 import { MessageService } from '../../messaging/message.service';
 import { InstagramAccountResolverService } from './instagram-account-resolver.service';
 import { InstagramInvalidSignatureException } from './instagram.errors';
-import { extractInstagramMessagingEvents, normalizeInstagramInboundMessage } from './instagram.normalizer';
+import { InstagramMediaIngestService } from './instagram-media.service';
+import { extractInstagramMediaRef, extractInstagramMessagingEvents, normalizeInstagramInboundMessage } from './instagram.normalizer';
 import { InstagramSignatureService } from './instagram-signature.service';
 import { InstagramWebhookVerificationService } from './instagram-webhook-verification.service';
 
@@ -25,6 +26,7 @@ export class InstagramWebhookController {
     private readonly accountResolver: InstagramAccountResolverService,
     private readonly messageService: MessageService,
     private readonly inboundAiService: InboundAiService,
+    private readonly mediaIngestService: InstagramMediaIngestService,
   ) {}
 
   // GET webhook verification: Meta calls this once when the subscription is
@@ -78,6 +80,17 @@ export class InstagramWebhookController {
         // webhook's 200 acknowledgment.
         const ingestResult = await this.messageService.ingestInboundMessage(normalized);
         await this.inboundAiService.processInboundMessage(ingestResult);
+
+        // Task 7-9 — same "new message only, after persistence" rule as
+        // WhatsApp's controller; event.message is already in scope here
+        // (no separate ref-extraction map needed, unlike WhatsApp's batch
+        // shape).
+        if (ingestResult.created) {
+          const mediaRef = extractInstagramMediaRef(event.message);
+          if (mediaRef) {
+            await this.mediaIngestService.ingest(clinicId, ingestResult.message.id, mediaRef);
+          }
+        }
       }
     }
 

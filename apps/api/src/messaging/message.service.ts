@@ -465,6 +465,44 @@ export class MessageService {
     });
   }
 
+  // Task 7-9 — attaches a media Attachment to a Message that was already
+  // persisted (via ingestInboundMessage() above), rather than nested inside
+  // that same create call. Deliberate: media download + MediaStorage.upload()
+  // happen in a separate step, after the Message row already exists, so a
+  // download/storage failure can never roll back or block the Message
+  // itself — see each channel's *-media.service.ts, which is the only
+  // caller and always wraps this in its own try/catch (a throw here must
+  // never reach a webhook controller). Internal, same-request use only: the
+  // caller already holds a messageId this same request just created, so no
+  // separate clinic check is needed here (unlike getAttachmentForClinic
+  // below, which IS a cross-boundary read and does check).
+  async attachMediaToMessage(messageId: string, attachment: NormalizedAttachment): Promise<MessageWithAttachments> {
+    try {
+      return await this.prisma.message.update({
+        where: { id: messageId },
+        data: { attachments: { create: toAttachmentCreateInput(attachment) } },
+        include: { attachments: true },
+      });
+    } catch (err) {
+      this.handleUnexpectedError(err, 'attach media to message');
+    }
+  }
+
+  // Task 7-9 — the one clinic-scoped lookup the authenticated media
+  // endpoint (inbox.controller.ts) needs: resolves an Attachment through
+  // its Message -> Conversation -> clinicId in a single query, never
+  // trusting a caller-supplied clinicId (that value always comes from
+  // AuthenticatedStaffContext at the controller boundary). Returns null
+  // for a genuinely unknown id AND for an attachment belonging to another
+  // clinic — the same "not found either way" convention every other
+  // clinic-scoped lookup in this codebase already uses (no cross-clinic
+  // leakage).
+  async getAttachmentForClinic(clinicId: string, attachmentId: string): Promise<Attachment | null> {
+    return this.prisma.attachment.findFirst({
+      where: { id: attachmentId, message: { conversation: { clinicId } } },
+    });
+  }
+
   // Part 9 — logs metadata only, never a raw Prisma/database error and
   // never message content (message bodies can carry patient PII — never
   // logged by default).

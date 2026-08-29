@@ -1,7 +1,13 @@
 import 'reflect-metadata';
 import { describe, expect, it } from 'vitest';
-import { ChannelKey, MessageContentType, MessageDeliveryStatus } from '../../generated/prisma/enums';
-import { extractMessengerMessagingEvents, normalizeMessengerDeliveries, normalizeMessengerInboundMessage } from './messenger.normalizer';
+import { AttachmentType, ChannelKey, MessageContentType, MessageDeliveryStatus } from '../../generated/prisma/enums';
+import { ALL_MESSENGER_MEDIA_WEBHOOK_FIXTURES, MESSENGER_STICKER_ATTACHMENT_WEBHOOK } from './__fixtures__/messenger-media-webhook.fixture';
+import {
+  extractMessengerMediaRef,
+  extractMessengerMessagingEvents,
+  normalizeMessengerDeliveries,
+  normalizeMessengerInboundMessage,
+} from './messenger.normalizer';
 import type { MessengerMessagingEvent, MessengerWebhookPayload } from './messenger.types';
 
 const CLINIC_ID = 'clinic-uuid';
@@ -131,6 +137,48 @@ describe('normalizeMessengerInboundMessage', () => {
     const before = Date.now();
     const normalized = normalizeMessengerInboundMessage(event, CLINIC_ID);
     expect(normalized?.receivedAt.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  // Task 7-9 prerequisite (2026-08-28 Meta-doc verification pass) — proves
+  // the current safe-skip behavior holds against the *real* attachment
+  // shape Meta actually sends (image/video/audio/file/sticker), not just a
+  // minimal `{ type: 'image' }` toy input. See __fixtures__/
+  // messenger-media-webhook.fixture.ts and docs/meta/facebook-messenger.md's
+  // "Inbound media (attachments) contract" section.
+  // Task 7-9 — updated from the prerequisite verification pass's own test:
+  // that pass proved these real-shaped attachment payloads were safely
+  // SKIPPED (no media persistence existed yet). Now that
+  // MessengerMediaIngestService exists, these same fixtures must normalize
+  // to a real MEDIA message instead.
+  it('10. every real-shaped media attachment webhook (image/video/audio/file/sticker) normalizes to a MEDIA message, never throws', () => {
+    for (const payload of ALL_MESSENGER_MEDIA_WEBHOOK_FIXTURES) {
+      const [event] = extractMessengerMessagingEvents(payload);
+      expect(event).toBeDefined();
+      expect(() => normalizeMessengerInboundMessage(event as MessengerMessagingEvent, CLINIC_ID)).not.toThrow();
+
+      const normalized = normalizeMessengerInboundMessage(event as MessengerMessagingEvent, CLINIC_ID);
+      expect(normalized?.contentType).toBe(MessageContentType.MEDIA);
+      expect(normalized?.text).toBeTruthy();
+    }
+  });
+});
+
+describe('extractMessengerMediaRef', () => {
+  it('maps a supported attachment to its url/attachmentType', () => {
+    const [event] = extractMessengerMessagingEvents(MESSENGER_STICKER_ATTACHMENT_WEBHOOK);
+    const ref = extractMessengerMediaRef((event as MessengerMessagingEvent).message);
+    expect(ref).toEqual({ url: 'https://scontent.example.test/msgr-sticker.webp', attachmentType: AttachmentType.STICKER });
+  });
+
+  it('returns null for a text message (no attachments)', () => {
+    const ref = extractMessengerMediaRef({ mid: 'msgr-mid-1', text: 'hello' });
+    expect(ref).toBeNull();
+  });
+
+  it('never throws on malformed/adversarial input', () => {
+    expect(() => extractMessengerMediaRef(undefined)).not.toThrow();
+    expect(extractMessengerMediaRef(undefined)).toBeNull();
+    expect(() => extractMessengerMediaRef({ mid: 'x', attachments: [null, {}] } as never)).not.toThrow();
   });
 });
 

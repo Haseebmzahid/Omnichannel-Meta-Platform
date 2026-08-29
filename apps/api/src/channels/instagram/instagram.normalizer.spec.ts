@@ -1,7 +1,8 @@
 import 'reflect-metadata';
 import { describe, expect, it } from 'vitest';
-import { ChannelKey, MessageContentType } from '../../generated/prisma/enums';
-import { extractInstagramMessagingEvents, normalizeInstagramInboundMessage } from './instagram.normalizer';
+import { AttachmentType, ChannelKey, MessageContentType } from '../../generated/prisma/enums';
+import { ALL_INSTAGRAM_MEDIA_WEBHOOK_FIXTURES, INSTAGRAM_STICKER_ATTACHMENT_WEBHOOK } from './__fixtures__/instagram-media-webhook.fixture';
+import { extractInstagramMediaRef, extractInstagramMessagingEvents, normalizeInstagramInboundMessage } from './instagram.normalizer';
 import type { InstagramMessagingEvent, InstagramWebhookPayload } from './instagram.types';
 
 const CLINIC_ID = 'clinic-uuid';
@@ -131,5 +132,47 @@ describe('normalizeInstagramInboundMessage', () => {
     const before = Date.now();
     const normalized = normalizeInstagramInboundMessage(event, CLINIC_ID);
     expect(normalized?.receivedAt.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  // Task 7-9 prerequisite (2026-08-28 Meta-doc verification pass) — proves
+  // the current safe-skip behavior holds against the *real* attachment
+  // shape Meta actually sends (image/video/audio/file/sticker), not just a
+  // minimal `{ type: 'image' }` toy input. See __fixtures__/
+  // instagram-media-webhook.fixture.ts and docs/meta/instagram-messaging.md's
+  // "Inbound media (attachments) contract" section.
+  // Task 7-9 — updated from the prerequisite verification pass's own test:
+  // that pass proved these real-shaped attachment payloads were safely
+  // SKIPPED (no media persistence existed yet). Now that
+  // InstagramMediaIngestService exists, these same fixtures must normalize
+  // to a real MEDIA message instead.
+  it('10. every real-shaped media attachment webhook (image/video/audio/file/sticker) normalizes to a MEDIA message, never throws', () => {
+    for (const payload of ALL_INSTAGRAM_MEDIA_WEBHOOK_FIXTURES) {
+      const [event] = extractInstagramMessagingEvents(payload);
+      expect(event).toBeDefined();
+      expect(() => normalizeInstagramInboundMessage(event as InstagramMessagingEvent, CLINIC_ID)).not.toThrow();
+
+      const normalized = normalizeInstagramInboundMessage(event as InstagramMessagingEvent, CLINIC_ID);
+      expect(normalized?.contentType).toBe(MessageContentType.MEDIA);
+      expect(normalized?.text).toBeTruthy();
+    }
+  });
+});
+
+describe('extractInstagramMediaRef', () => {
+  it('maps a supported attachment to its url/attachmentType', () => {
+    const [event] = extractInstagramMessagingEvents(INSTAGRAM_STICKER_ATTACHMENT_WEBHOOK);
+    const ref = extractInstagramMediaRef((event as InstagramMessagingEvent).message);
+    expect(ref).toEqual({ url: 'https://scontent.example.test/ig-sticker.webp', attachmentType: AttachmentType.STICKER });
+  });
+
+  it('returns null for a text message (no attachments)', () => {
+    const ref = extractInstagramMediaRef({ mid: 'ig-mid-1', text: 'hello' });
+    expect(ref).toBeNull();
+  });
+
+  it('never throws on malformed/adversarial input', () => {
+    expect(() => extractInstagramMediaRef(undefined)).not.toThrow();
+    expect(extractInstagramMediaRef(undefined)).toBeNull();
+    expect(() => extractInstagramMediaRef({ mid: 'x', attachments: [null, {}] } as never)).not.toThrow();
   });
 });

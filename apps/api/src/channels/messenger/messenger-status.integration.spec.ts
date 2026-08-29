@@ -11,6 +11,7 @@ import { IdentityResolutionService } from '../../messaging/identity-resolution.s
 import { MessageService } from '../../messaging/message.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MessengerAccountResolverService } from './messenger-account-resolver.service';
+import type { MessengerMediaIngestService } from './messenger-media.service';
 import { MessengerSignatureService } from './messenger-signature.service';
 import { MessengerWebhookController } from './messenger-webhook.controller';
 import { MessengerWebhookVerificationService } from './messenger-webhook-verification.service';
@@ -93,6 +94,10 @@ describe('Messenger status webhook -> Messaging Core (integration)', () => {
     });
 
     const inboundAiService = { processInboundMessage: vi.fn().mockResolvedValue(null) } as unknown as InboundAiService;
+    // Task 7-9: media ingestion is proven separately in
+    // messenger-media.service.spec.ts — a no-op fake here keeps that
+    // concern out of this file's own (status-callback) assertions.
+    const mediaIngestService = { ingest: vi.fn().mockResolvedValue(undefined) } as unknown as MessengerMediaIngestService;
 
     controller = new MessengerWebhookController(
       new MessengerWebhookVerificationService('unused-in-this-test'),
@@ -100,6 +105,7 @@ describe('Messenger status webhook -> Messaging Core (integration)', () => {
       new MessengerAccountResolverService(PAGE_ID, clinic.id),
       messageService,
       inboundAiService,
+      mediaIngestService,
     );
   });
 

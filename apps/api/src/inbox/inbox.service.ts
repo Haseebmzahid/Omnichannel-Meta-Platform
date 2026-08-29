@@ -1,22 +1,32 @@
 import { createHash } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ChannelOutboundDispatcher } from '../channels/channel-outbound-dispatcher.service';
 import type { ConversationStatus } from '../generated/prisma/enums';
+import { MEDIA_STORAGE, type MediaStorage } from '../media/media-storage.interface';
 import { ConversationService } from '../messaging/conversation.service';
 import type { ConversationDetailRow, ConversationListRow } from '../messaging/conversation.service';
 import { MessageService } from '../messaging/message.service';
 import type { MessageWithAttachments } from '../messaging/message.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { StaffNotFoundException } from './inbox.errors';
+import { AttachmentNotFoundException, StaffNotFoundException } from './inbox.errors';
 import type {
   CursorPage,
   GetInboxMessagesInput,
+  InboxAttachmentUrlDto,
   InboxConversationDetail,
   InboxConversationSummary,
   InboxMessageDto,
   InboxReplyResultDto,
   ListInboxConversationsInput,
 } from './inbox.types';
+
+// Task 7-9 — how long the signed URL InboxService hands back stays valid.
+// Matches S3MediaStorage's own DEFAULT_SIGNED_URL_TTL_SECONDS
+// (media/providers/s3-media-storage.provider.ts) — kept as an explicit,
+// separate constant here rather than importing that provider-specific
+// value (this service must never depend on which MediaStorage
+// implementation is bound).
+const ATTACHMENT_URL_TTL_SECONDS = 300;
 
 // Task 7-1 — the staff inbox's own service layer. This is the "Staff
 // Inbox API" box in the architecture diagram the task gives:
@@ -56,6 +66,11 @@ export class InboxService {
     private readonly conversationService: ConversationService,
     private readonly messageService: MessageService,
     private readonly dispatcher: ChannelOutboundDispatcher,
+    // MediaStorage is an interface (erased at runtime), so Nest's default
+    // type-reflection DI can't resolve it the way the class-typed
+    // dependencies above are — @Inject(MEDIA_STORAGE) targets the same
+    // symbol token media-storage.module.ts binds a concrete provider to.
+    @Inject(MEDIA_STORAGE) private readonly mediaStorage: MediaStorage,
   ) {}
 
   async listConversations(clinicId: string, input: ListInboxConversationsInput): Promise<CursorPage<InboxConversationSummary>> {
@@ -139,6 +154,21 @@ export class InboxService {
       delivered: result.delivered,
       failureReason: result.failureReason,
     };
+  }
+
+  // Task 7-9 — the authenticated media endpoint's own boundary:
+  // clinicId always comes from AuthenticatedStaffContext at the controller
+  // (never a caller-supplied value), and getAttachmentForClinic resolves
+  // the attachment through its Message -> Conversation -> clinicId in one
+  // query, returning null (never revealing *why*) for an unknown id or one
+  // belonging to another clinic. Only ever returns a short-lived signed
+  // URL — never the storageRef, bucket name, or any storage credential.
+  async getAttachmentSignedUrl(clinicId: string, attachmentId: string): Promise<InboxAttachmentUrlDto> {
+    const attachment = await this.messageService.getAttachmentForClinic(clinicId, attachmentId);
+    if (!attachment || !attachment.storageRef) throw new AttachmentNotFoundException(attachmentId);
+
+    const url = await this.mediaStorage.getSignedReadUrl(attachment.storageRef, ATTACHMENT_URL_TTL_SECONDS);
+    return { url, expiresInSeconds: ATTACHMENT_URL_TTL_SECONDS };
   }
 
   // The one direct Prisma read in this file — Staff is not a Messaging
@@ -229,7 +259,6 @@ function toMessageDto(message: MessageWithAttachments): InboxMessageDto {
     attachments: message.attachments.map((attachment) => ({
       id: attachment.id,
       type: attachment.type,
-      storageRef: attachment.storageRef,
       mime: attachment.mime,
       caption: attachment.caption,
     })),

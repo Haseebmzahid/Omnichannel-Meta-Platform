@@ -113,3 +113,17 @@ export function useMarkRead(conversationId: string) {
     onSuccess: invalidateConversation,
   });
 }
+
+// Task 7-9 — the signed URL the backend returns expires in ~5 minutes
+// (InboxService's ATTACHMENT_URL_TTL_SECONDS); staleTime is set safely
+// under that so a still-open MessageBubble refetches a fresh one before
+// the old one can expire, rather than only on remount.
+const ATTACHMENT_URL_STALE_TIME_MS = 4 * 60 * 1000;
+
+export function useAttachmentUrl(attachmentId: string) {
+  return useQuery({
+    queryKey: ['inbox', 'attachment-url', attachmentId],
+    queryFn: () => inboxApi.getAttachmentUrl(attachmentId),
+    staleTime: ATTACHMENT_URL_STALE_TIME_MS,
+  });
+}

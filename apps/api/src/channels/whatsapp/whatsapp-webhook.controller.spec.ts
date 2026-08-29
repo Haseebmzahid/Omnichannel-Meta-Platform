@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InboundAiService } from '../../ai/inbound-ai.service';
 import { MessageService } from '../../messaging/message.service';
 import { WhatsAppAccountResolverService } from './whatsapp-account-resolver.service';
+import { WhatsAppMediaIngestService } from './whatsapp-media.service';
 import { WhatsAppSignatureService } from './whatsapp-signature.service';
 import { WhatsAppWebhookController } from './whatsapp-webhook.controller';
 import { WhatsAppWebhookVerificationService } from './whatsapp-webhook-verification.service';
@@ -96,14 +97,22 @@ describe('WhatsAppWebhookController (HTTP)', () => {
   let ingestInboundMessage: ReturnType<typeof vi.fn>;
   let reconcileOutboundDeliveryStatus: ReturnType<typeof vi.fn>;
   let processInboundMessage: ReturnType<typeof vi.fn>;
+  let mediaIngest: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
-    ingestInboundMessage = vi.fn().mockResolvedValue({ created: true });
+    // Task 7-9: the controller now reads ingestResult.message.id (to pass
+    // to WhatsAppMediaIngestService when a media ref is present) — this
+    // mock needs a real message.id even though this file's own fixtures
+    // are all text messages (no media ref, so mediaIngest is never
+    // actually invoked; that path is proven in whatsapp-media.service.spec.ts
+    // and whatsapp-media-ingest.integration.spec.ts).
+    ingestInboundMessage = vi.fn().mockResolvedValue({ created: true, message: { id: 'message-1' } });
     reconcileOutboundDeliveryStatus = vi.fn().mockResolvedValue({ message: null, applied: false });
     // AI triggering itself (Task 4C-8) is proven in inbound-ai.service.spec.ts
     // and the ai/tools/send-message.tool.integration.spec.ts full-stack test
     // — this file only proves the controller calls it, not what it does.
     processInboundMessage = vi.fn().mockResolvedValue(null);
+    mediaIngest = vi.fn().mockResolvedValue(undefined);
 
     const moduleRef = await Test.createTestingModule({
       controllers: [WhatsAppWebhookController],
@@ -116,6 +125,7 @@ describe('WhatsAppWebhookController (HTTP)', () => {
         },
         { provide: MessageService, useValue: { ingestInboundMessage, reconcileOutboundDeliveryStatus } },
         { provide: InboundAiService, useValue: { processInboundMessage } },
+        { provide: WhatsAppMediaIngestService, useValue: { ingest: mediaIngest } },
       ],
     }).compile();
 
@@ -171,7 +181,7 @@ describe('WhatsAppWebhookController (HTTP)', () => {
     // after — the inbound message is persisted, with exactly what
     // ingestInboundMessage() resolved to.
     expect(processInboundMessage).toHaveBeenCalledTimes(1);
-    expect(processInboundMessage).toHaveBeenCalledWith({ created: true });
+    expect(processInboundMessage).toHaveBeenCalledWith({ created: true, message: { id: 'message-1' } });
   });
 
   it('4. an invalid signature is rejected and never reaches MessageService (or AI processing)', async () => {

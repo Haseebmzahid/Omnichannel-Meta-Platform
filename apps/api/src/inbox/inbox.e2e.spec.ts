@@ -10,6 +10,7 @@ import { WhatsAppOutboundService } from '../channels/whatsapp/whatsapp-outbound.
 import type { WhatsAppSendService } from '../channels/whatsapp/whatsapp-send.service';
 import type { Clinic, Conversation, Staff } from '../generated/prisma/client';
 import { ChannelKey, ConversationMode, ConversationStatus, MessageContentType, StaffRole } from '../generated/prisma/enums';
+import type { MediaStorage } from '../media/media-storage.interface';
 import { IdentityResolutionService } from '../messaging/identity-resolution.service';
 import { ConversationService } from '../messaging/conversation.service';
 import { MessageService } from '../messaging/message.service';
@@ -101,7 +102,17 @@ describe('Inbox HTTP boundary (e2e)', () => {
     const messengerOutbound = new MessengerOutboundService(prisma, messageService, { sendText: vi.fn() } as unknown as MessengerSendService);
     const dispatcher = new ChannelOutboundDispatcher(prisma, whatsAppOutbound, instagramOutbound, messengerOutbound);
 
-    const inboxService = new InboxService(prisma, conversationService, messageService, dispatcher);
+    // Task 7-9: this file proves the pre-existing Inbox flows (list/reply/
+    // takeover/status/etc.); the media endpoint itself is proven separately
+    // in inbox.service.spec.ts/inbox.controller.spec.ts — this fake is
+    // never actually invoked by any test in this file.
+    const mediaStorage = {
+      upload: vi.fn(),
+      getSignedReadUrl: vi.fn(),
+      delete: vi.fn(),
+    } as unknown as MediaStorage;
+
+    const inboxService = new InboxService(prisma, conversationService, messageService, dispatcher, mediaStorage);
     controller = new InboxController(inboxService);
   });
 

@@ -231,12 +231,21 @@ export interface InboxConversationDetail {
   updatedAt: string;
 }
 
+// Task 7-9 — storageRef is deliberately not part of this DTO (the backend
+// stopped sending it): it's an internal object-storage key with no use to
+// the browser now that GET /inbox/attachments/:id exists — see
+// useAttachmentUrl (features/inbox/hooks.ts), which fetches a short-lived
+// signed URL by attachment id instead.
 export interface InboxAttachmentDto {
   id: string;
   type: AttachmentType;
-  storageRef: string | null;
   mime: string | null;
   caption: string | null;
+}
+
+export interface InboxAttachmentUrlDto {
+  url: string;
+  expiresInSeconds: number;
 }
 
 export interface InboxMessageDto {

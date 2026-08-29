@@ -71,3 +71,44 @@ in [ADR-004](../adr/ADR-004-patient-identity-model.md), not on an Instagram-nati
   (**C2**, above).
 - Current quick-reply/ice-breaker limits, in case Meta has revised the 13-button/20-character/4-question figures
   above.
+
+## Inbound media (attachments) contract (VERIFIED 2026-08-28 — prerequisite for Task 7-9)
+
+Fetched directly from Meta's own current developer documentation specifically to unblock Task 7-9 (inbound
+media persistence), which STOPPED on an earlier attempt because this exact contract was undocumented.
+`instagram.normalizer.ts`/`instagram.types.ts` remain untouched by this verification pass — this section is
+research only.
+
+**This deliberately does not duplicate the attachment shape — see `facebook-messenger.md`'s own "Inbound media
+(attachments) contract" section for the full field-level detail.** Per this doc's own already-established
+"Two integration paths" decision above (Page-linked path, sharing plumbing with Messenger), Instagram DMs
+arrive on the identical `messaging[].message.attachments[]` event Meta documents on the single shared reference
+page `developers.facebook.com/docs/messenger-platform/reference/webhook-events/messages/` — the same page
+already lists Instagram-specific attachment type variants (`ig_reel`, `ig_post`, alongside Messenger's generic
+`reel`/`post`) together with Messenger's, confirming this is one shared event schema, not two to reconcile.
+
+### What differs from Messenger (EXISTING REPO CONTRACT — already correctly modeled)
+
+Only the envelope's `object` field: `"instagram"` here vs. `"page"` for Messenger — exactly what
+`instagram.types.ts`'s `InstagramWebhookPayload` already checks (`body.object !== 'instagram'`), no change
+needed. `image`/`audio`/`video`/`file`/`sticker` attachment types and their `payload.url` shape are identical
+to Messenger's.
+
+### Reconfirms this doc's own pre-existing note
+
+This verification pass corroborates, rather than contradicts, the "Messaging window and mechanics" section
+above's already-VERIFIED statement: *"For shared media, only the URL appears in the webhook notification —
+media is not fetched by authenticated ID the way WhatsApp media is."* No media-id-based Retrieve-URL step
+exists for Instagram (or Messenger) the way it does for WhatsApp — `payload.url` is the only thing the webhook
+gives you.
+
+### Not established / unknown
+
+Same open point as `facebook-messenger.md`: the exact download-authentication requirement for `payload.url`
+(page access token vs. directly-fetchable pre-signed CDN link) is not confirmed by Meta's own reachable
+documentation for either channel — see that doc's "Not established" section rather than duplicating it here.
+
+### Sources
+
+- https://developers.facebook.com/docs/messenger-platform/reference/webhook-events/messages/ (the same shared
+  reference — no Instagram-specific webhook-payload reference page distinct from Messenger's was found)

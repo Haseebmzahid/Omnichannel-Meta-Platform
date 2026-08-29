@@ -8,6 +8,7 @@ import { ChannelKey, ConversationMode, ConversationStatus, StaffRole } from '../
 import { InboxService } from './inbox.service';
 import type {
   CursorPage,
+  InboxAttachmentUrlDto,
   InboxConversationDetail,
   InboxConversationSummary,
   InboxMessageDto,
@@ -101,6 +102,23 @@ export class InboxController {
     const parsedConversationId = parseOrBadRequest(uuidSchema, conversationId, 'conversationId');
     const parsed = parseOrBadRequest(updateStatusBodySchema, body, 'body');
     return this.inboxService.updateStatus(staff.clinicId, parsedConversationId, parsed.status);
+  }
+
+  // Task 7-9 — a read, not a mutation (viewing an attachment isn't
+  // changing anything), so READ_ONLY staff can call this exactly like
+  // getMessages()/getConversation() above — no assertCanMutate() here.
+  // clinicId is, as with every route in this controller, only ever the
+  // authenticated staff's own — InboxService.getAttachmentSignedUrl()
+  // resolves the attachment through Message -> Conversation -> clinicId
+  // and returns the same 404 whether the id is unknown or belongs to
+  // another clinic.
+  @Get('attachments/:attachmentId')
+  async getAttachmentUrl(
+    @CurrentStaff() staff: AuthenticatedStaffContext,
+    @Param('attachmentId') attachmentId: string,
+  ): Promise<InboxAttachmentUrlDto> {
+    const parsedAttachmentId = parseOrBadRequest(uuidSchema, attachmentId, 'attachmentId');
+    return this.inboxService.getAttachmentSignedUrl(staff.clinicId, parsedAttachmentId);
   }
 }
 
