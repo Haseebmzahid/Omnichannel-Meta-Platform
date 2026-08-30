@@ -89,49 +89,53 @@ describe('KnowledgeController — HTTP-boundary validation and authenticated-ide
     expect(knowledgeService.updateStatus).toHaveBeenCalledWith(CLINIC_ID, TARGET_ID, STAFF_ID, { isActive: true });
   });
 
-  // --- READ_ONLY authorization --------------------------------------------
+  // --- Knowledge management is ADMIN-only (client-confirmed production
+  // role hardening) — MANAGER, AGENT, and READ_ONLY are all rejected
+  // identically, and can all still list documents (a read). -----------------
 
-  it('READ_ONLY staff cannot create a document — rejected before ClinicKnowledgeService is called', async () => {
+  it('ADMIN can create, update, and change the status of a document', async () => {
+    const { controller, knowledgeService } = buildController();
+
+    await controller.create(staffContext({ role: StaffRole.ADMIN }), { category: KnowledgeCategory.FAQ, title: 'x', body: 'x', tags: [] });
+    await controller.update(staffContext({ role: StaffRole.ADMIN }), TARGET_ID, { category: KnowledgeCategory.FAQ, title: 'x', body: 'x', tags: [] });
+    await controller.updateStatus(staffContext({ role: StaffRole.ADMIN }), TARGET_ID, { isActive: false });
+
+    expect(knowledgeService.createDocument).toHaveBeenCalledTimes(1);
+    expect(knowledgeService.updateDocument).toHaveBeenCalledTimes(1);
+    expect(knowledgeService.updateStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([StaffRole.MANAGER, StaffRole.AGENT, StaffRole.READ_ONLY])('%s staff cannot create a document — rejected before ClinicKnowledgeService is called', async (role) => {
     const { controller, knowledgeService } = buildController();
 
     await expect(
-      controller.create(staffContext({ role: StaffRole.READ_ONLY }), { category: KnowledgeCategory.FAQ, title: 'x', body: 'x', tags: [] }),
+      controller.create(staffContext({ role }), { category: KnowledgeCategory.FAQ, title: 'x', body: 'x', tags: [] }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(knowledgeService.createDocument).not.toHaveBeenCalled();
   });
 
-  it('READ_ONLY staff cannot update a document', async () => {
+  it.each([StaffRole.MANAGER, StaffRole.AGENT, StaffRole.READ_ONLY])('%s staff cannot update a document', async (role) => {
     const { controller, knowledgeService } = buildController();
 
     await expect(
-      controller.update(staffContext({ role: StaffRole.READ_ONLY }), TARGET_ID, { category: KnowledgeCategory.FAQ, title: 'x', body: 'x', tags: [] }),
+      controller.update(staffContext({ role }), TARGET_ID, { category: KnowledgeCategory.FAQ, title: 'x', body: 'x', tags: [] }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(knowledgeService.updateDocument).not.toHaveBeenCalled();
   });
 
-  it('READ_ONLY staff cannot change status', async () => {
+  it.each([StaffRole.MANAGER, StaffRole.AGENT, StaffRole.READ_ONLY])('%s staff cannot change status', async (role) => {
     const { controller, knowledgeService } = buildController();
 
-    await expect(controller.updateStatus(staffContext({ role: StaffRole.READ_ONLY }), TARGET_ID, { isActive: false })).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(controller.updateStatus(staffContext({ role }), TARGET_ID, { isActive: false })).rejects.toBeInstanceOf(ForbiddenException);
     expect(knowledgeService.updateStatus).not.toHaveBeenCalled();
   });
 
-  it('READ_ONLY staff can still list documents (reads are allowed)', async () => {
+  it.each([StaffRole.MANAGER, StaffRole.AGENT, StaffRole.READ_ONLY])('%s staff can still list documents (a read)', async (role) => {
     const { controller, knowledgeService } = buildController();
 
-    await controller.list(staffContext({ role: StaffRole.READ_ONLY }));
+    await controller.list(staffContext({ role }));
 
     expect(knowledgeService.listDocuments).toHaveBeenCalled();
-  });
-
-  it('ADMIN, MANAGER, and AGENT can all create documents — no finer-grained role restriction is invented', async () => {
-    for (const role of [StaffRole.ADMIN, StaffRole.MANAGER, StaffRole.AGENT]) {
-      const { controller, knowledgeService } = buildController();
-      await controller.create(staffContext({ role }), { category: KnowledgeCategory.FAQ, title: 'x', body: 'x', tags: [] });
-      expect(knowledgeService.createDocument).toHaveBeenCalledTimes(1);
-    }
   });
 
   // --- HTTP-boundary validation --------------------------------------------

@@ -246,4 +246,19 @@ describe('KnowledgePage', () => {
     expect(screen.queryByRole('button', { name: /Edit/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Disable/ })).not.toBeInTheDocument();
   });
+
+  // Client-confirmed production role hardening: knowledge management is
+  // ADMIN-only now — MANAGER and AGENT see the same read-only knowledge
+  // base READ_ONLY does, never the mutation controls.
+  it.each(['MANAGER', 'AGENT'] as const)('hides mutation controls for %s staff — knowledge management is ADMIN-only', async (role) => {
+    vi.mocked(authApi.fetchCurrentStaff).mockResolvedValue(currentStaff(role));
+    vi.mocked(knowledgeApi.listKnowledgeDocuments).mockResolvedValue([knowledgeDocument()]);
+
+    renderWithProviders(<KnowledgePage />);
+
+    expect(await screen.findByText('Do you accept walk-ins?')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add document' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Edit/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Disable/ })).not.toBeInTheDocument();
+  });
 });

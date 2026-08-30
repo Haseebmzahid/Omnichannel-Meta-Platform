@@ -287,3 +287,17 @@ export interface InboxReplyResultDto {
   delivered: boolean;
   failureReason?: string;
 }
+
+// --- customers.types.ts: CustomerExportRow (Task: customer export) ------
+// Mirrors the backend's CustomerExportRow exactly — the same sanitized
+// projection GET /customers (view, every role) and GET /customers/export
+// (CSV, ADMIN-only) both return.
+
+export interface Customer {
+  name: string;
+  phone: string | null;
+  email: string | null;
+  channels: ChannelKey[];
+  firstInteraction: string;
+  lastInteraction: string;
+}

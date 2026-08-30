@@ -16,6 +16,26 @@ function isValidDatabaseUrl(value: string): boolean {
   }
 }
 
+// Matches Vite's own default dev port (apps/web/vite.config.ts) — not a
+// secret, just a convenience default for local development/test, exactly
+// like LOCAL_DEV_DATABASE_URL above. Only ever injected by loadConfig()
+// below for non-production, and only when WEB_ORIGIN is entirely unset.
+export const LOCAL_DEV_WEB_ORIGIN = 'http://localhost:5173';
+
+// A CORS origin is stricter than "any URL": no path, query, or fragment —
+// `url.origin === value` catches a trailing slash, a path, or anything
+// else that isn't exactly scheme://host[:port]. Restricted to http(s)
+// specifically since those are the only schemes a browser CORS check is
+// ever comparing against.
+function isValidOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Environment schema for the API. Only variables actually consumed today are
  * listed here — REDIS_URL, GEMINI_API_KEY, and Meta tokens are added when the
@@ -163,16 +183,27 @@ export const envSchema = z
     // dev-only fallback lives in auth.module.ts, not here, so no
     // real-looking default secret is ever checked into this schema.
     AUTH_JWT_SECRET: z.string().min(32).optional(),
-    // Staff portal frontend origin (Task 7-3). The session cookie is
-    // httpOnly + credentialed, so the browser only sends it cross-origin
-    // when the API's CORS response explicitly allows that exact origin
-    // with credentials — see apps/api/src/main.ts's app.enableCors() call.
-    // Defaults to Vite's own default dev port (apps/web/vite.config.ts);
-    // not security-sensitive the way a secret is (a wrong value just
-    // blocks the frontend, it doesn't open anything up), so no
-    // production-required check the way AUTH_JWT_SECRET has — but it must
-    // be set to the real deployed frontend origin in production.
-    WEB_ORIGIN: z.string().min(1).default('http://localhost:5173'),
+    // Staff portal frontend origin. The session cookie is httpOnly +
+    // credentialed, so the browser only sends it cross-origin when the
+    // API's CORS response explicitly allows that exact origin with
+    // credentials — see apps/api/src/main.ts's app.enableCors() call. No
+    // default here, for the same reason DATABASE_URL has none: a
+    // same-for-every-environment default (Vite's own dev port) is exactly
+    // how a real deployment silently ends up with a CORS configuration
+    // that can never match its actual frontend origin — a wrong value
+    // doesn't fail loudly at boot, it just makes every credentialed
+    // request from the real frontend fail with an opaque CORS error at
+    // request time. The local-dev fallback is applied by loadConfig()
+    // below, gated to non-production; production instead gets a
+    // required-field failure from the superRefine below when this is left
+    // unset, exactly like DATABASE_URL.
+    WEB_ORIGIN: z
+      .string()
+      .min(1, 'WEB_ORIGIN must not be empty.')
+      .refine(isValidOrigin, {
+        message: 'WEB_ORIGIN must be a valid http:// or https:// origin, with no path, query, or trailing slash.',
+      })
+      .optional(),
     // Media storage (Task 7-10) — the S3-compatible object storage
     // Attachment.storage_ref points into (docs/architecture/01-domain-model.md's
     // Attachment section). All optional: nothing in the app calls
@@ -224,52 +255,41 @@ export const envSchema = z
       });
     }
 
-    if (!val.GEMINI_API_KEY) {
+    if (!val.WEB_ORIGIN) {
       ctx.addIssue({
         code: 'custom',
-        path: ['GEMINI_API_KEY'],
-        message: 'GEMINI_API_KEY is required when NODE_ENV=production.',
+        path: ['WEB_ORIGIN'],
+        message:
+          'WEB_ORIGIN is required when NODE_ENV=production. Refusing to start — production never falls back to a local dev origin.',
       });
     }
 
-    const requiredWhatsAppKeys = [
-      'WHATSAPP_VERIFY_TOKEN',
-      'WHATSAPP_APP_SECRET',
-      'WHATSAPP_PHONE_NUMBER_ID',
-      'WHATSAPP_CLINIC_ID',
-      'WHATSAPP_ACCESS_TOKEN',
-    ] as const;
-    for (const key of requiredWhatsAppKeys) {
-      if (!val[key]) {
-        ctx.addIssue({ code: 'custom', path: [key], message: `${key} is required when NODE_ENV=production.` });
-      }
-    }
-
-    const requiredInstagramKeys = [
-      'INSTAGRAM_VERIFY_TOKEN',
-      'INSTAGRAM_APP_SECRET',
-      'INSTAGRAM_ACCOUNT_ID',
-      'INSTAGRAM_CLINIC_ID',
-      'INSTAGRAM_ACCESS_TOKEN',
-    ] as const;
-    for (const key of requiredInstagramKeys) {
-      if (!val[key]) {
-        ctx.addIssue({ code: 'custom', path: [key], message: `${key} is required when NODE_ENV=production.` });
-      }
-    }
-
-    const requiredMessengerKeys = [
-      'MESSENGER_VERIFY_TOKEN',
-      'MESSENGER_APP_SECRET',
-      'MESSENGER_PAGE_ID',
-      'MESSENGER_CLINIC_ID',
-      'MESSENGER_ACCESS_TOKEN',
-    ] as const;
-    for (const key of requiredMessengerKeys) {
-      if (!val[key]) {
-        ctx.addIssue({ code: 'custom', path: [key], message: `${key} is required when NODE_ENV=production.` });
-      }
-    }
+    // Staged production rollout: core infrastructure (DATABASE_URL,
+    // AUTH_JWT_SECRET, WEB_ORIGIN, checked here and above/below) is the
+    // only thing required for the API to boot in production. Gemini and
+    // the three Meta channels are deliberately NOT required here — each is
+    // an optional integration that can be activated independently, once
+    // its own credentials exist, without a redeploy-blocking config error
+    // for integrations nobody has finished onboarding yet. This is safe
+    // specifically because every consumer of these values already
+    // degrades gracefully when they're missing, rather than crashing:
+    //   - GeminiAIProvider.getClient() (ai/providers/gemini.provider.ts)
+    //     throws a safe AIProviderError only when generate() is actually
+    //     called, never at construction/DI-wiring time.
+    //   - Each channel's *SignatureService.verify() and
+    //     *WebhookVerificationService.verifyChallenge() safely return
+    //     false / throw a typed exception when their token/secret is
+    //     unset, so an unconfigured channel simply never passes inbound
+    //     verification, rather than crashing on a malformed HMAC key.
+    //   - Each channel's *AccountResolverService.resolveClinicId()
+    //     returns null when unset, so an inbound webhook payload is safely
+    //     skipped rather than routed anywhere.
+    //   - Each channel's *SendService/*MediaIngestService throws a typed
+    //     "not configured" exception (e.g. WhatsAppSendNotConfiguredException)
+    //     the moment a send/media-download is actually attempted, never at
+    //     startup.
+    // If that ever changes for a given consumer, this is where its
+    // production-required check would need to come back.
 
     if (!val.AUTH_JWT_SECRET) {
       ctx.addIssue({
@@ -280,13 +300,14 @@ export const envSchema = z
     }
   });
 
-// DATABASE_URL is `.optional()` on envSchema only so the superRefine above
-// can report a dedicated, production-specific error when it's missing —
-// every environment that actually parses successfully (production with an
-// explicit value, or development/test with loadConfig()'s own fallback
-// below) always has a real string here. AppConfig reflects that guarantee
-// rather than the schema's internal `.optional()` escape hatch.
-export type AppConfig = Omit<z.infer<typeof envSchema>, 'DATABASE_URL'> & { DATABASE_URL: string };
+// DATABASE_URL and WEB_ORIGIN are `.optional()` on envSchema only so the
+// superRefine above can report a dedicated, production-specific error when
+// either is missing — every environment that actually parses successfully
+// (production with explicit values, or development/test with
+// loadConfig()'s own fallback below) always has a real string for both.
+// AppConfig reflects that guarantee rather than the schema's internal
+// `.optional()` escape hatch.
+export type AppConfig = Omit<z.infer<typeof envSchema>, 'DATABASE_URL' | 'WEB_ORIGIN'> & { DATABASE_URL: string; WEB_ORIGIN: string };
 
 /**
  * Parses and validates process.env into a typed AppConfig. Throws a single,
@@ -317,6 +338,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   // error instead.
   if (nodeEnv !== 'production' && !effectiveEnv.DATABASE_URL) {
     effectiveEnv.DATABASE_URL = LOCAL_DEV_DATABASE_URL;
+  }
+
+  // Same reasoning as DATABASE_URL immediately above, for WEB_ORIGIN.
+  if (nodeEnv !== 'production' && !effectiveEnv.WEB_ORIGIN) {
+    effectiveEnv.WEB_ORIGIN = LOCAL_DEV_WEB_ORIGIN;
   }
 
   const result = envSchema.safeParse(effectiveEnv);

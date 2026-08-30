@@ -8,7 +8,7 @@ import { Skeleton } from '../../components/ui/Skeleton';
 import { ApiError } from '../../lib/api/client';
 import { StaffStatus, type Staff } from '../../lib/api/types';
 import { useAuth } from '../auth/useAuth';
-import { canMutate } from '../inbox/permissions';
+import { isAdmin } from '../inbox/permissions';
 import { StaffRoleBadge, StaffStatusBadge } from './badges';
 import { CreateStaffDialog } from './CreateStaffDialog';
 import { useStaffList, useUpdateStaffStatus } from './hooks';
@@ -16,8 +16,10 @@ import { ResetPasswordDialog } from './ResetPasswordDialog';
 
 // The real staff-management screen consuming apps/api/src/staff/* (Task 7-3),
 // replacing the Task 7-5 placeholder. Every mutation control is gated behind
-// canMutate() as a UI convenience only — StaffController's own
-// assertCanManageStaff remains the actual authorization boundary.
+// isAdmin() as a UI convenience only — StaffController's own
+// assertCanManageStaff (client-confirmed production role hardening:
+// ADMIN-only) remains the actual authorization boundary. MANAGER and AGENT
+// see the same read-only staff list READ_ONLY does.
 export function StaffPage() {
   const { staff: currentStaff } = useAuth();
   const { data: staffList, isLoading, isError, error, refetch } = useStaffList();
@@ -31,7 +33,7 @@ export function StaffPage() {
 
   if (!currentStaff) return null; // RequireAuth guarantees this never renders unauthenticated
 
-  const canManage = canMutate(currentStaff.role);
+  const canManage = isAdmin(currentStaff.role);
 
   function handleEnable(member: Staff) {
     setStatusError(null);

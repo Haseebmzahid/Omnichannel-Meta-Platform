@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
+import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthenticatedStaffContext } from '../auth/auth.types';
 import { ChannelKey, StaffRole } from '../generated/prisma/enums';
@@ -11,7 +12,7 @@ const CLINIC_ID = randomUUID();
 const STAFF_ID = randomUUID();
 
 function staffContext(overrides: Partial<AuthenticatedStaffContext> = {}): AuthenticatedStaffContext {
-  return { staffId: STAFF_ID, clinicId: CLINIC_ID, role: StaffRole.AGENT, ...overrides };
+  return { staffId: STAFF_ID, clinicId: CLINIC_ID, role: StaffRole.ADMIN, ...overrides };
 }
 
 function fakeRow(overrides: Partial<CustomerExportRow> = {}): CustomerExportRow {
@@ -33,54 +34,88 @@ function buildController(rows: CustomerExportRow[] = [fakeRow()]) {
 }
 
 describe('CustomersController', () => {
-  it('exports using the authenticated clinicId — there is no request input to supply a different one through', async () => {
-    const { controller, listCustomersForClinic } = buildController();
+  // --- GET /customers — "view customers", a read available to every role ---
 
-    await controller.exportCsv(staffContext());
+  describe('list', () => {
+    it('lists using the authenticated clinicId — there is no request input to supply a different one through', async () => {
+      const { controller, listCustomersForClinic } = buildController();
 
-    expect(listCustomersForClinic).toHaveBeenCalledWith(CLINIC_ID);
+      await controller.list(staffContext());
+
+      expect(listCustomersForClinic).toHaveBeenCalledWith(CLINIC_ID);
+    });
+
+    it('a different authenticated clinicId scopes the list to that clinic', async () => {
+      const { controller, listCustomersForClinic } = buildController();
+      const otherClinicId = randomUUID();
+
+      await controller.list(staffContext({ clinicId: otherClinicId }));
+
+      expect(listCustomersForClinic).toHaveBeenCalledWith(otherClinicId);
+    });
+
+    it.each([StaffRole.ADMIN, StaffRole.MANAGER, StaffRole.AGENT, StaffRole.READ_ONLY])('%s staff can view the customer list — this route has no mutation-role gate', async (role) => {
+      const { controller, listCustomersForClinic } = buildController();
+
+      const result = await controller.list(staffContext({ role }));
+
+      expect(listCustomersForClinic).toHaveBeenCalled();
+      expect(result).toEqual([fakeRow()]);
+    });
   });
 
-  it('a different authenticated clinicId scopes the export to that clinic', async () => {
-    const { controller, listCustomersForClinic } = buildController();
-    const otherClinicId = randomUUID();
+  // --- GET /customers/export — bulk CSV export, ADMIN-only (client-
+  // confirmed production role hardening) -------------------------------
 
-    await controller.exportCsv(staffContext({ clinicId: otherClinicId }));
+  describe('exportCsv', () => {
+    it('ADMIN can export using the authenticated clinicId', async () => {
+      const { controller, listCustomersForClinic } = buildController();
 
-    expect(listCustomersForClinic).toHaveBeenCalledWith(otherClinicId);
-  });
+      await controller.exportCsv(staffContext({ role: StaffRole.ADMIN }));
 
-  it('READ_ONLY staff can export — this route has no mutation-role gate', async () => {
-    const { controller, listCustomersForClinic } = buildController();
+      expect(listCustomersForClinic).toHaveBeenCalledWith(CLINIC_ID);
+    });
 
-    await controller.exportCsv(staffContext({ role: StaffRole.READ_ONLY }));
+    it('a different authenticated clinicId scopes the export to that clinic', async () => {
+      const { controller, listCustomersForClinic } = buildController();
+      const otherClinicId = randomUUID();
 
-    expect(listCustomersForClinic).toHaveBeenCalled();
-  });
+      await controller.exportCsv(staffContext({ role: StaffRole.ADMIN, clinicId: otherClinicId }));
 
-  it('returns a CSV string built from the service rows, with the documented header', async () => {
-    const { controller } = buildController([fakeRow({ name: 'Fatima Noor' })]);
+      expect(listCustomersForClinic).toHaveBeenCalledWith(otherClinicId);
+    });
 
-    const csv = await controller.exportCsv(staffContext());
+    it.each([StaffRole.MANAGER, StaffRole.AGENT, StaffRole.READ_ONLY])('%s staff cannot export — rejected before CustomerExportService is called', async (role) => {
+      const { controller, listCustomersForClinic } = buildController();
 
-    expect(csv).toContain('Name,Phone,Email,Channels,First Interaction,Last Interaction');
-    expect(csv).toContain('Fatima Noor');
-  });
+      await expect(controller.exportCsv(staffContext({ role }))).rejects.toBeInstanceOf(ForbiddenException);
+      expect(listCustomersForClinic).not.toHaveBeenCalled();
+    });
 
-  it('returns just the header row when the clinic has no customers yet', async () => {
-    const { controller } = buildController([]);
+    it('returns a CSV string built from the service rows, with the documented header', async () => {
+      const { controller } = buildController([fakeRow({ name: 'Fatima Noor' })]);
 
-    const csv = await controller.exportCsv(staffContext());
+      const csv = await controller.exportCsv(staffContext({ role: StaffRole.ADMIN }));
 
-    expect(csv).toBe('Name,Phone,Email,Channels,First Interaction,Last Interaction\r\n');
-  });
+      expect(csv).toContain('Name,Phone,Email,Channels,First Interaction,Last Interaction');
+      expect(csv).toContain('Fatima Noor');
+    });
 
-  it('never includes anything beyond the documented customer fields', async () => {
-    const { controller } = buildController([fakeRow()]);
+    it('returns just the header row when the clinic has no customers yet', async () => {
+      const { controller } = buildController([]);
 
-    const csv = await controller.exportCsv(staffContext());
-    const [header] = csv.split('\r\n');
+      const csv = await controller.exportCsv(staffContext({ role: StaffRole.ADMIN }));
 
-    expect(header).toBe('Name,Phone,Email,Channels,First Interaction,Last Interaction');
+      expect(csv).toBe('Name,Phone,Email,Channels,First Interaction,Last Interaction\r\n');
+    });
+
+    it('never includes anything beyond the documented customer fields', async () => {
+      const { controller } = buildController([fakeRow()]);
+
+      const csv = await controller.exportCsv(staffContext({ role: StaffRole.ADMIN }));
+      const [header] = csv.split('\r\n');
+
+      expect(header).toBe('Name,Phone,Email,Channels,First Interaction,Last Interaction');
+    });
   });
 });

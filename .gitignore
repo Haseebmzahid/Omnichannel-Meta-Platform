@@ -12,6 +12,7 @@ apps/api/src/generated/
 .env
 .env.local
 .env.*.local
+hostinger.production.env
 
 .DS_Store
 Thumbs.db

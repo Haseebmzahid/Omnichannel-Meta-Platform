@@ -60,20 +60,21 @@ export class StaffController {
   }
 }
 
-// Task 7-3 §3 — "determine from the existing Role model which roles may
-// manage staff... do not invent a new permission system." No architecture
-// doc defines a staff-management-specific rule beyond the fixed Role enum
-// itself (docs/architecture/01-domain-model.md §2), so this reuses the one
-// rule the codebase already established for exactly this situation —
-// inbox/inbox.controller.ts's assertCanMutate — verbatim: ReadOnly staff
-// cannot perform write actions; every other role can. Not shared as an
-// import from inbox.controller.ts (a staff-management module has no
-// reason to depend on the inbox module) — duplicated as the same small,
-// self-evident check, matching this codebase's existing per-module
-// error/rule duplication convention (see staff.errors.ts's header comment).
+// Client-confirmed production role hardening: staff management (create,
+// enable/disable, password reset) is an ADMIN-only capability — AGENT and
+// MANAGER may view the staff list but never mutate it, exactly like
+// READ_ONLY. This replaces the earlier "any non-READ_ONLY role" rule
+// (inbox/inbox.controller.ts's assertCanMutate still uses that broader
+// rule for inbox actions — reply/takeover/resume-AI deliberately remain
+// open to AGENT/MANAGER, per the same client requirement). Duplicated
+// per-module rather than imported, matching this codebase's existing
+// convention (see staff.errors.ts's header comment) — now genuinely
+// necessary too, since knowledge.controller.ts's and
+// customers.controller.ts's admin-only checks must independently agree
+// with this one without a shared dependency between unrelated modules.
 function assertCanManageStaff(staff: AuthenticatedStaffContext): void {
-  if (staff.role === StaffRole.READ_ONLY) {
-    throw new ForbiddenException('Read-only staff cannot perform this action.');
+  if (staff.role !== StaffRole.ADMIN) {
+    throw new ForbiddenException('Only ADMIN staff can perform this action.');
   }
 }
 

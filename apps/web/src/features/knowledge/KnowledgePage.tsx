@@ -11,7 +11,7 @@ import { ApiError } from '../../lib/api/client';
 import { KnowledgeCategory, type KnowledgeDocument } from '../../lib/api/types';
 import { formatRelativeTime } from '../../lib/utils';
 import { useAuth } from '../auth/useAuth';
-import { canMutate } from '../inbox/permissions';
+import { isAdmin } from '../inbox/permissions';
 import { CATEGORY_LABELS, CategoryBadge, KnowledgeStatusBadge } from './badges';
 import { useKnowledgeDocuments, useUpdateKnowledgeDocumentStatus } from './hooks';
 import { KnowledgeDocumentDialog, type KnowledgeDocumentDialogTarget } from './KnowledgeDocumentDialog';
@@ -20,9 +20,11 @@ type StatusFilter = '' | 'ACTIVE' | 'INACTIVE';
 
 // The real knowledge-base management screen consuming apps/api/src/knowledge/*
 // (Task 7-7), replacing the Task 7-5 placeholder. Structure mirrors
-// features/staff/StaffPage.tsx: canMutate() gates every mutation control as
+// features/staff/StaffPage.tsx: isAdmin() gates every mutation control as
 // a UI convenience only — KnowledgeController's own assertCanManageKnowledge
-// remains the actual authorization boundary. Search/category/status
+// (client-confirmed production role hardening: ADMIN-only) remains the
+// actual authorization boundary. MANAGER and AGENT see the same read-only
+// knowledge base READ_ONLY does. Search/category/status
 // filtering is client-side over the already-fetched list — GET /knowledge
 // takes no query params (a per-clinic knowledge base is realistically tens
 // of documents, the same "no pagination" reasoning as StaffService).
@@ -55,7 +57,7 @@ export function KnowledgePage() {
 
   if (!currentStaff) return null; // RequireAuth guarantees this never renders unauthenticated
 
-  const canManage = canMutate(currentStaff.role);
+  const canManage = isAdmin(currentStaff.role);
   const hasActiveFilter = Boolean(search || categoryFilter || statusFilter);
 
   function handleEnable(document: KnowledgeDocument) {

@@ -61,14 +61,14 @@ export class KnowledgeController {
   }
 }
 
-// Task 7-7 — no new permission system: the exact same rule
-// staff/staff.controller.ts's assertCanManageStaff established for staff
-// management, duplicated here rather than imported across modules, matching
-// this codebase's existing per-module rule-duplication convention (see that
-// file's own header comment on why).
+// Client-confirmed production role hardening: knowledge create/edit/
+// enable/disable is an ADMIN-only capability — AGENT and MANAGER may view
+// the knowledge base but never mutate it, exactly like READ_ONLY. Mirrors
+// staff/staff.controller.ts's assertCanManageStaff exactly (see that
+// file's header comment for why this stays duplicated rather than shared).
 function assertCanManageKnowledge(staff: AuthenticatedStaffContext): void {
-  if (staff.role === StaffRole.READ_ONLY) {
-    throw new ForbiddenException('Read-only staff cannot perform this action.');
+  if (staff.role !== StaffRole.ADMIN) {
+    throw new ForbiddenException('Only ADMIN staff can perform this action.');
   }
 }
 

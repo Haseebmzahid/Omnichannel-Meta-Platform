@@ -75,49 +75,53 @@ describe('StaffController — HTTP-boundary validation and authenticated-identit
     expect(staffService.updatePassword).toHaveBeenCalledWith(CLINIC_ID, TARGET_ID, { password: 'new-strong-password' });
   });
 
-  // --- READ_ONLY authorization --------------------------------------------
+  // --- Staff management is ADMIN-only (client-confirmed production role
+  // hardening) — MANAGER, AGENT, and READ_ONLY are all rejected identically,
+  // and can all still list staff (a read). ---------------------------------
 
-  it('10. READ_ONLY staff cannot create staff — rejected before StaffService is called', async () => {
+  it('ADMIN can create staff, change status, and reset a password', async () => {
+    const { controller, staffService } = buildController();
+
+    await controller.create(staffContext({ role: StaffRole.ADMIN }), { name: 'x', email: 'admin-create@example.test', password: 'a-strong-password', role: 'AGENT' });
+    await controller.updateStatus(staffContext({ role: StaffRole.ADMIN }), TARGET_ID, { status: 'DISABLED' });
+    await controller.updatePassword(staffContext({ role: StaffRole.ADMIN }), TARGET_ID, { password: 'a-strong-password' });
+
+    expect(staffService.createStaff).toHaveBeenCalledTimes(1);
+    expect(staffService.updateStatus).toHaveBeenCalledTimes(1);
+    expect(staffService.updatePassword).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([StaffRole.MANAGER, StaffRole.AGENT, StaffRole.READ_ONLY])('%s staff cannot create staff — rejected before StaffService is called', async (role) => {
     const { controller, staffService } = buildController();
 
     await expect(
-      controller.create(staffContext({ role: StaffRole.READ_ONLY }), { name: 'x', email: 'x@example.test', password: 'a-strong-password', role: 'AGENT' }),
+      controller.create(staffContext({ role }), { name: 'x', email: 'x@example.test', password: 'a-strong-password', role: 'AGENT' }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(staffService.createStaff).not.toHaveBeenCalled();
   });
 
-  it('10. READ_ONLY staff cannot change status', async () => {
+  it.each([StaffRole.MANAGER, StaffRole.AGENT, StaffRole.READ_ONLY])('%s staff cannot change status', async (role) => {
     const { controller, staffService } = buildController();
 
-    await expect(controller.updateStatus(staffContext({ role: StaffRole.READ_ONLY }), TARGET_ID, { status: 'DISABLED' })).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(controller.updateStatus(staffContext({ role }), TARGET_ID, { status: 'DISABLED' })).rejects.toBeInstanceOf(ForbiddenException);
     expect(staffService.updateStatus).not.toHaveBeenCalled();
   });
 
-  it('10. READ_ONLY staff cannot change password', async () => {
+  it.each([StaffRole.MANAGER, StaffRole.AGENT, StaffRole.READ_ONLY])('%s staff cannot reset a password', async (role) => {
     const { controller, staffService } = buildController();
 
-    await expect(
-      controller.updatePassword(staffContext({ role: StaffRole.READ_ONLY }), TARGET_ID, { password: 'a-strong-password' }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(controller.updatePassword(staffContext({ role }), TARGET_ID, { password: 'a-strong-password' })).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
     expect(staffService.updatePassword).not.toHaveBeenCalled();
   });
 
-  it('READ_ONLY staff can still list staff (reads are allowed)', async () => {
+  it.each([StaffRole.MANAGER, StaffRole.AGENT, StaffRole.READ_ONLY])('%s staff can still list staff (a read)', async (role) => {
     const { controller, staffService } = buildController();
 
-    await controller.list(staffContext({ role: StaffRole.READ_ONLY }));
+    await controller.list(staffContext({ role }));
 
     expect(staffService.listStaff).toHaveBeenCalled();
-  });
-
-  it('ADMIN, MANAGER, and AGENT can all create staff — no finer-grained role restriction is invented', async () => {
-    for (const role of [StaffRole.ADMIN, StaffRole.MANAGER, StaffRole.AGENT]) {
-      const { controller, staffService } = buildController();
-      await controller.create(staffContext({ role }), { name: 'x', email: `x-${role}@example.test`, password: 'a-strong-password', role: 'AGENT' });
-      expect(staffService.createStaff).toHaveBeenCalledTimes(1);
-    }
   });
 
   // --- HTTP-boundary validation --------------------------------------------

@@ -84,6 +84,7 @@ describe('apps/api config.ts — dotenv loading', () => {
     process.env.MESSENGER_CLINIC_ID = 'c';
     process.env.MESSENGER_ACCESS_TOKEN = 't';
     process.env.AUTH_JWT_SECRET = 'a'.repeat(32);
+    process.env.WEB_ORIGIN = 'https://portal.example.test';
 
     const mod = await import('./config.js');
 

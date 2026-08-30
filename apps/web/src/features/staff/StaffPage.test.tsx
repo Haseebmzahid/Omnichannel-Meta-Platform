@@ -183,4 +183,19 @@ describe('StaffPage', () => {
     expect(screen.queryByRole('button', { name: /Disable/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Reset password/ })).not.toBeInTheDocument();
   });
+
+  // Client-confirmed production role hardening: staff management is
+  // ADMIN-only now — MANAGER and AGENT see the same read-only staff list
+  // READ_ONLY does, never the mutation controls.
+  it.each(['MANAGER', 'AGENT'] as const)('hides mutation controls for %s staff — staff management is ADMIN-only', async (role) => {
+    vi.mocked(authApi.fetchCurrentStaff).mockResolvedValue(currentStaff(role));
+    vi.mocked(staffApi.listStaff).mockResolvedValue([staffMember()]);
+
+    renderWithProviders(<StaffPage />);
+
+    expect(await screen.findByText('Bilal Tariq')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add staff' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Disable/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reset password/ })).not.toBeInTheDocument();
+  });
 });

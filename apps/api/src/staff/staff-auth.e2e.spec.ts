@@ -31,6 +31,8 @@ describe('Staff management HTTP boundary (e2e)', () => {
   let clinicA: Clinic;
   let clinicB: Clinic;
   let adminA: Staff;
+  let managerA: Staff;
+  let agentA: Staff;
   let readOnlyA: Staff;
   const PASSWORD = 'correct horse battery staple';
 
@@ -55,6 +57,12 @@ describe('Staff management HTTP boundary (e2e)', () => {
     const passwordHash = await argon2.hash(PASSWORD);
     adminA = await prisma.staff.create({
       data: { clinicId: clinicA.id, name: 'Admin A', email: `admin-a-${randomUUID()}@example.test`, passwordHash, role: StaffRole.ADMIN, status: StaffStatus.ACTIVE },
+    });
+    managerA = await prisma.staff.create({
+      data: { clinicId: clinicA.id, name: 'Manager A', email: `manager-a-${randomUUID()}@example.test`, passwordHash, role: StaffRole.MANAGER, status: StaffStatus.ACTIVE },
+    });
+    agentA = await prisma.staff.create({
+      data: { clinicId: clinicA.id, name: 'Agent A', email: `agent-a-${randomUUID()}@example.test`, passwordHash, role: StaffRole.AGENT, status: StaffStatus.ACTIVE },
     });
     readOnlyA = await prisma.staff.create({
       data: { clinicId: clinicA.id, name: 'ReadOnly A', email: `readonly-a-${randomUUID()}@example.test`, passwordHash, role: StaffRole.READ_ONLY, status: StaffStatus.ACTIVE },
@@ -134,6 +142,34 @@ describe('Staff management HTTP boundary (e2e)', () => {
 
     const listRes = await request(app.getHttpServer()).get('/staff').set('Cookie', cookie);
     expect(listRes.status).toBe(200);
+  });
+
+  // Client-confirmed production role hardening: staff management is
+  // ADMIN-only now — MANAGER and AGENT get the same 403 READ_ONLY always
+  // has, over real HTTP through the real SessionAuthGuard, not just the
+  // controller unit test's directly-constructed context.
+  it('MANAGER and AGENT staff get a 403 on create/status/password, and a 200 on list', async () => {
+    for (const staff of [managerA, agentA]) {
+      const cookie = await loginAs(staff.email);
+
+      const createRes = await request(app.getHttpServer())
+        .post('/staff')
+        .set('Cookie', cookie)
+        .send({ name: 'x', email: `hardening-blocked-${randomUUID()}@example.test`, password: 'a-strong-password', role: 'AGENT' });
+      expect(createRes.status).toBe(403);
+
+      const statusRes = await request(app.getHttpServer()).patch(`/staff/${readOnlyA.id}/status`).set('Cookie', cookie).send({ status: 'DISABLED' });
+      expect(statusRes.status).toBe(403);
+
+      const passwordRes = await request(app.getHttpServer())
+        .patch(`/staff/${readOnlyA.id}/password`)
+        .set('Cookie', cookie)
+        .send({ password: 'a-strong-password' });
+      expect(passwordRes.status).toBe(403);
+
+      const listRes = await request(app.getHttpServer()).get('/staff').set('Cookie', cookie);
+      expect(listRes.status).toBe(200);
+    }
   });
 
   it('a duplicate email returns a clean 409, not a raw database error', async () => {
