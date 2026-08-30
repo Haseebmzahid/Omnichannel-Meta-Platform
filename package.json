@@ -7,7 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "turbo run build",
+    "build": "pnpm run build:api",
+    "build:api": "pnpm --filter \"@clinic/api...\" run build",
+    "build:all": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
