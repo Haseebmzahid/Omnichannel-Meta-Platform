@@ -7,8 +7,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "node node_modules/typescript/bin/tsc -p packages/config/tsconfig.json && node node_modules/typescript/bin/tsc -p apps/api/tsconfig.json",
-    "build:api": "node node_modules/typescript/bin/tsc -p packages/config/tsconfig.json && node node_modules/typescript/bin/tsc -p apps/api/tsconfig.json",
+    "build": "node apps/api/node_modules/prisma/build/index.js generate --config apps/api/prisma.config.ts && node node_modules/typescript/bin/tsc -p packages/config/tsconfig.json && node node_modules/typescript/bin/tsc -p apps/api/tsconfig.json",
+    "build:api": "node apps/api/node_modules/prisma/build/index.js generate --config apps/api/prisma.config.ts && node node_modules/typescript/bin/tsc -p packages/config/tsconfig.json && node node_modules/typescript/bin/tsc -p apps/api/tsconfig.json",
     "build:all": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
