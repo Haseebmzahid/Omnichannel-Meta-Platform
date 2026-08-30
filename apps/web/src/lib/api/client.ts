@@ -53,6 +53,44 @@ function extractMessage(body: unknown): string | undefined {
   return undefined;
 }
 
+// Fetches a file response (e.g. a CSV export) and saves it via the browser,
+// rather than returning parsed JSON like apiFetch above — the one other
+// place this file talks to the network, kept here (not a component/hook)
+// for the same "one file that knows how to talk to apps/api" reason.
+// Downloads happen entirely client-side (fetch -> Blob -> a temporary
+// object URL -> a programmatically-clicked <a download>) rather than a
+// plain `<a href={apiUrl}>` navigation, so the request still carries
+// credentials the same way every other apiFetch call does, regardless of
+// the session cookie's SameSite policy (a top-level cross-origin navigation
+// is not guaranteed to).
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path), { credentials: 'include' });
+  } catch {
+    throw new ApiError(0, 'Could not reach the server. Check your connection and try again.');
+  }
+
+  if (!res.ok) {
+    const contentType = res.headers.get('content-type') ?? '';
+    const data = contentType.includes('application/json') ? await res.json().catch(() => undefined) : undefined;
+    throw new ApiError(res.status, extractMessage(data) ?? GENERIC_ERROR_MESSAGE);
+  }
+
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   let res: Response;
   try {

@@ -81,6 +81,14 @@ describe('KnowledgeController — HTTP-boundary validation and authenticated-ide
     expect(knowledgeService.updateStatus).toHaveBeenCalledWith(CLINIC_ID, TARGET_ID, STAFF_ID, { isActive: false });
   });
 
+  it('updateStatus reactivates a document — isActive: true is passed through, not just isActive: false', async () => {
+    const { controller, knowledgeService } = buildController();
+
+    await controller.updateStatus(staffContext(), TARGET_ID, { isActive: true });
+
+    expect(knowledgeService.updateStatus).toHaveBeenCalledWith(CLINIC_ID, TARGET_ID, STAFF_ID, { isActive: true });
+  });
+
   // --- READ_ONLY authorization --------------------------------------------
 
   it('READ_ONLY staff cannot create a document — rejected before ClinicKnowledgeService is called', async () => {

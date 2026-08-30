@@ -203,6 +203,22 @@ describe('KnowledgePage', () => {
     expect(await screen.findByText('Do you accept walk-ins? was disabled.')).toBeInTheDocument();
   });
 
+  // 9b. Reactivate (enable) action — the exact inverse of disable, no
+  // separate creation path, and no confirmation dialog (unlike disable).
+  it('enables a previously-disabled document with no confirmation step', async () => {
+    vi.mocked(authApi.fetchCurrentStaff).mockResolvedValue(currentStaff());
+    vi.mocked(knowledgeApi.listKnowledgeDocuments).mockResolvedValue([knowledgeDocument({ isActive: false })]);
+    vi.mocked(knowledgeApi.updateKnowledgeDocumentStatus).mockResolvedValue(knowledgeDocument({ isActive: true }));
+
+    const user = userEvent.setup();
+    renderWithProviders(<KnowledgePage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Enable Do you accept walk-ins?' }));
+
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeDocumentStatus).toHaveBeenCalledWith('doc-1', true));
+    expect(await screen.findByText('Do you accept walk-ins? was enabled.')).toBeInTheDocument();
+  });
+
   // 10. Mutation error handling (surfaced for good measure alongside item 9)
   it('surfaces a mutation error when disabling fails', async () => {
     vi.mocked(authApi.fetchCurrentStaff).mockResolvedValue(currentStaff());

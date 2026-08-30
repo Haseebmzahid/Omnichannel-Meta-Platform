@@ -202,13 +202,13 @@ export class ConversationService {
     return this.getConversationForClinic(clinicId, conversationId);
   }
 
-  // Task 7-1, requirement 7 — the one documented, in-scope mode transition:
-  // PENDING -> HUMAN ("staff takes over"), per docs/architecture/
+  // Task 7-1, requirement 7 — the documented PENDING -> HUMAN mode
+  // transition ("staff takes over"), per docs/architecture/
   // 03-conversation-and-inbox.md §5 ("PENDING: Human requested, not yet
   // claimed" / "HUMAN: Staff assigned"). Any other starting mode is
-  // rejected — see InvalidModeTransitionException's own comment for why
-  // the other documented transitions (HUMAN -> AI, any -> PAUSED,
-  // SUSPENDED -> AI) are intentionally not implemented by this task.
+  // rejected. See resumeAiConversation() below for this transition's
+  // documented inverse (HUMAN -> AI); any -> PAUSED and SUSPENDED -> AI
+  // remain out of scope — see InvalidModeTransitionException's own comment.
   //
   // The guarded `updateMany` (not a plain `update`) is what makes this
   // safe under a race: if two staff members attempt to take over the same
@@ -229,6 +229,50 @@ export class ConversationService {
     });
     if (result.count === 0) {
       throw new InvalidModeTransitionException(conversation.mode, ConversationMode.HUMAN);
+    }
+
+    return this.getConversationForClinic(clinicId, conversationId);
+  }
+
+  // The documented inverse of takeoverConversation() above: HUMAN -> AI
+  // ("staff resumes AI"), per docs/architecture/03-conversation-and-
+  // inbox.md §5 — "requires an explicit staff action and a reason. The AI
+  // never auto-resumes from HUMAN." `reason` is required (never optional,
+  // never defaulted) and recorded on the conversation's own internalNotes
+  // — an existing, already-modeled, staff-only field — rather than
+  // inventing an AuditLog model this task's schema section explicitly
+  // excludes. assignedStaffId is cleared: once AI is back in control, no
+  // staff member "owns" the conversation the way HUMAN mode's assignment
+  // means, symmetric with takeoverConversation() setting it.
+  //
+  // Deliberately does NOT re-trigger the orchestrator itself — the "AI
+  // orchestrator is given a summary of what the human did" requirement is
+  // already satisfied structurally: AiContextService.buildContext() pulls
+  // the same persisted message history this resume leaves untouched, and
+  // every staff-authored message in it already maps to the 'assistant'
+  // role (see ai-context.service.ts's toAIMessageRole()) — so the very
+  // next inbound patient message the AI processes already sees what the
+  // human said, with no separate summarization step to build.
+  //
+  // Same guarded-`updateMany` race protection as takeoverConversation():
+  // only a write whose WHERE clause still matches mode=HUMAN at commit
+  // time succeeds.
+  async resumeAiConversation(clinicId: string, conversationId: string, staffId: string, reason: string): Promise<ConversationDetailRow> {
+    const conversation = await this.getConversationForClinic(clinicId, conversationId);
+    if (conversation.mode !== ConversationMode.HUMAN) {
+      throw new InvalidModeTransitionException(conversation.mode, ConversationMode.AI);
+    }
+
+    const result = await this.prisma.conversation.updateMany({
+      where: { id: conversationId, clinicId, mode: ConversationMode.HUMAN },
+      data: {
+        mode: ConversationMode.AI,
+        assignedStaffId: null,
+        internalNotes: { push: `AI resumed by staff ${staffId}: ${reason}` },
+      },
+    });
+    if (result.count === 0) {
+      throw new InvalidModeTransitionException(conversation.mode, ConversationMode.AI);
     }
 
     return this.getConversationForClinic(clinicId, conversationId);

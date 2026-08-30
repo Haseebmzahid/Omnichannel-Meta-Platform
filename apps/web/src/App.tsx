@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { LoginPage } from './features/auth/LoginPage';
 import { RequireAuth } from './features/auth/RequireAuth';
+import { CustomersPage } from './features/customers/CustomersPage';
 import { InboxPage } from './features/inbox/InboxPage';
 import { KnowledgePage } from './features/knowledge/KnowledgePage';
 import { StaffPage } from './features/staff/StaffPage';
@@ -27,6 +28,7 @@ function App() {
           <Route element={<AppShell />}>
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/inbox/:conversationId" element={<InboxPage />} />
+            <Route path="/customers" element={<CustomersPage />} />
             <Route path="/staff" element={<StaffPage />} />
             <Route path="/knowledge" element={<KnowledgePage />} />
             <Route path="/" element={<Navigate to="/inbox" replace />} />

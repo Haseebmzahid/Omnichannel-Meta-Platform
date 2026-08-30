@@ -200,6 +200,83 @@ describe('Inbox HTTP boundary (e2e)', () => {
     expect(unchanged?.assignedStaffId).toBeNull();
   });
 
+  it('the complete human-handoff workflow: PENDING -> takeover -> staff reply while HUMAN -> resume AI -> back to AI, staff-owned notes recorded', async () => {
+    const conversation = await createConversation({ text: 'handoff workflow start' });
+    await prisma.conversation.update({ where: { id: conversation.id }, data: { mode: ConversationMode.PENDING } });
+
+    // PENDING -> HUMAN takeover.
+    const takenOver = await controller.takeover(staffAContext(), conversation.id);
+    expect(takenOver.mode).toBe(ConversationMode.HUMAN);
+    expect(takenOver.assignedStaff?.id).toBe(staffA.id);
+
+    // Staff can reply while HUMAN, through the same real dispatcher path.
+    const replyResult = await controller.reply(staffAContext(), conversation.id, { text: 'A staff member is helping you now.' });
+    expect(replyResult.delivered).toBe(true);
+
+    // A duplicate inbound delivery (e.g. a Meta webhook retry) while HUMAN
+    // must stay idempotent: same externalMessageId never creates a second
+    // Message row, and the conversation's mode/assignment are untouched by
+    // ingestion itself (mode changes only ever happen through the explicit
+    // takeover/resume-ai actions this test also exercises). Reuses the
+    // conversation's own (channelAccountRef, externalThreadKey) so this
+    // resolves to the SAME conversation created above, not a new one.
+    const duplicateDelivery = baseInboundMessage({
+      text: 'duplicate delivery',
+      channelAccountRef: conversation.channelAccountRef,
+      externalThreadKey: conversation.externalThreadKey,
+      externalMessageId: 'dup-handoff-msg-1',
+    });
+    const firstIngest = await messageService.ingestInboundMessage(duplicateDelivery);
+    expect(firstIngest.created).toBe(true);
+    expect(firstIngest.conversation.id).toBe(conversation.id);
+
+    const before = await prisma.message.count({ where: { conversationId: conversation.id } });
+    const secondIngest = await messageService.ingestInboundMessage(duplicateDelivery);
+    const after = await prisma.message.count({ where: { conversationId: conversation.id } });
+    expect(secondIngest.created).toBe(false);
+    expect(after).toBe(before);
+
+    const stillHuman = await prisma.conversation.findUnique({ where: { id: conversation.id } });
+    expect(stillHuman?.mode).toBe(ConversationMode.HUMAN);
+
+    // HUMAN -> AI resume, with a required reason.
+    const resumed = await controller.resumeAi(staffAContext(), conversation.id, { reason: 'Issue resolved, AI can continue.' });
+    expect(resumed.mode).toBe(ConversationMode.AI);
+    expect(resumed.assignedStaff).toBeNull();
+    expect(resumed.internalNotes.some((note) => note.includes('Issue resolved, AI can continue.'))).toBe(true);
+
+    // A repeat resume attempt (already AI) is rejected, not silently accepted.
+    await expect(controller.resumeAi(staffAContext(), conversation.id, { reason: 'again' })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('resume-ai is clinic-scoped and staff-scoped, and rejects a missing reason', async () => {
+    const conversation = await createConversation({ text: 'resume-ai scoping test' });
+    await prisma.conversation.update({ where: { id: conversation.id }, data: { mode: ConversationMode.HUMAN, assignedStaffId: staffA.id } });
+
+    await expect(controller.resumeAi(staffAContext({ clinicId: clinicB.id }), conversation.id, { reason: 'reason' })).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(controller.resumeAi(staffAContext({ staffId: staffB.id }), conversation.id, { reason: 'reason' })).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(controller.resumeAi(staffAContext(), conversation.id, {})).rejects.toMatchObject({ status: 400 });
+
+    const unchanged = await prisma.conversation.findUnique({ where: { id: conversation.id } });
+    expect(unchanged?.mode).toBe(ConversationMode.HUMAN);
+  });
+
+  it('READ_ONLY staff cannot resume AI', async () => {
+    const conversation = await createConversation({ text: 'read-only resume block' });
+    await prisma.conversation.update({ where: { id: conversation.id }, data: { mode: ConversationMode.HUMAN } });
+
+    await expect(
+      controller.resumeAi(staffAContext({ role: StaffRole.READ_ONLY }), conversation.id, { reason: 'reason' }),
+    ).rejects.toMatchObject({ status: 403 });
+
+    const unchanged = await prisma.conversation.findUnique({ where: { id: conversation.id } });
+    expect(unchanged?.mode).toBe(ConversationMode.HUMAN);
+  });
+
   it('R/S. status transitions work and the documented PENDING/RESOLVED conflict is rejected', async () => {
     const conversation = await createConversation({ text: 'e2e status transition' });
 

@@ -21,6 +21,7 @@ import type {
 //   POST  /inbox/conversations/:id/messages   { text }
 //   PATCH /inbox/conversations/:id/read
 //   POST  /inbox/conversations/:id/takeover   (no body)
+//   POST  /inbox/conversations/:id/resume-ai  { reason }
 //   PATCH /inbox/conversations/:id/status     { status }
 
 export function listConversations(params: ListConversationsParams): Promise<CursorPage<InboxConversationSummary>> {
@@ -49,6 +50,14 @@ export function markRead(conversationId: string): Promise<InboxConversationDetai
 
 export function takeover(conversationId: string): Promise<InboxConversationDetail> {
   return apiFetch<InboxConversationDetail>(`/inbox/conversations/${conversationId}/takeover`, { method: 'POST' });
+}
+
+// The documented inverse of takeover() — HUMAN -> AI, staff-initiated,
+// always with an explicit reason (see apps/api/src/inbox/inbox.controller.ts's
+// resumeAi() route for why this body field is required, unlike takeover()'s
+// empty one).
+export function resumeAi(conversationId: string, reason: string): Promise<InboxConversationDetail> {
+  return apiFetch<InboxConversationDetail>(`/inbox/conversations/${conversationId}/resume-ai`, { method: 'POST', body: { reason } });
 }
 
 export function updateStatus(conversationId: string, status: ConversationStatus): Promise<InboxConversationDetail> {

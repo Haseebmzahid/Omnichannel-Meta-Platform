@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Mail, Phone, UserCog } from 'lucide-react';
+import { Bot, Mail, Phone, UserCog } from 'lucide-react';
 import { Avatar } from '../../components/ui/Avatar';
 import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { ConversationMode, ConversationStatus, type InboxConversationDetail, StaffRole } from '../../lib/api/types';
 import { ApiError } from '../../lib/api/client';
 import { ChannelBadge, ModeBadge, STATUS_LABELS, StatusBadge } from './badges';
+import { ResumeAiDialog } from './ResumeAiDialog';
 import { useTakeover, useUpdateStatus } from './hooks';
 import { canMutate } from './permissions';
 
@@ -18,10 +19,15 @@ export function ConversationHeader({ conversation, currentStaffRole }: Conversat
   const takeover = useTakeover(conversation.id);
   const updateStatus = useUpdateStatus(conversation.id);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
 
   const displayName = conversation.patient?.displayName ?? conversation.contact.displayName ?? 'Unknown contact';
   const canAct = canMutate(currentStaffRole);
   const canTakeOver = canAct && conversation.mode === ConversationMode.PENDING;
+  // The documented inverse action of "Take over" — only offered while HUMAN
+  // (docs/architecture/03-conversation-and-inbox.md §5's one other
+  // implemented mode transition, resumeAiConversation() on the backend).
+  const canResumeAi = canAct && conversation.mode === ConversationMode.HUMAN;
 
   function handleStatusChange(status: ConversationStatus) {
     setStatusError(null);
@@ -70,6 +76,13 @@ export function ConversationHeader({ conversation, currentStaffRole }: Conversat
               </Button>
             )}
 
+            {canResumeAi && (
+              <Button variant="secondary" size="sm" onClick={() => setResumeDialogOpen(true)}>
+                <Bot className="size-3.5" aria-hidden="true" />
+                Resume AI
+              </Button>
+            )}
+
             {canAct && (
               <Select
                 aria-label="Conversation status"
@@ -98,6 +111,8 @@ export function ConversationHeader({ conversation, currentStaffRole }: Conversat
           {statusError}
         </p>
       )}
+
+      <ResumeAiDialog open={resumeDialogOpen} conversationId={conversation.id} onClose={() => setResumeDialogOpen(false)} />
     </div>
   );
 }

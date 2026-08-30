@@ -298,4 +298,19 @@ describe('ClinicKnowledgeService — staff-facing management methods (Task 7-7)'
     await expect(service.updateStatus(CLINIC_ID, DOCUMENT_ID, STAFF_ID, { isActive: false })).rejects.toBeInstanceOf(KnowledgeDocumentNotFoundException);
     expect(knowledgeDocument.update).not.toHaveBeenCalled();
   });
+
+  it('updateStatus reactivates a previously-disabled document (isActive: true), the exact inverse of deactivation', async () => {
+    const { service, knowledgeDocument } = buildManagementService({
+      findFirst: vi.fn().mockResolvedValue(rawDocument({ isActive: false })),
+      update: vi.fn().mockResolvedValue(rawDocument({ isActive: true })),
+    });
+
+    const result = await service.updateStatus(CLINIC_ID, DOCUMENT_ID, STAFF_ID, { isActive: true });
+
+    expect(knowledgeDocument.update).toHaveBeenCalledWith({
+      where: { id: DOCUMENT_ID },
+      data: { isActive: true, updatedBy: STAFF_ID },
+    });
+    expect(result.isActive).toBe(true);
+  });
 });

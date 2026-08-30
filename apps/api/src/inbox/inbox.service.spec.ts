@@ -60,6 +60,7 @@ function buildService(
     getConversationForClinic: vi.fn().mockResolvedValue(fakeConversationRow()),
     markConversationRead: vi.fn().mockResolvedValue(fakeConversationRow({ unreadCount: 0 })),
     takeoverConversation: vi.fn().mockResolvedValue(fakeConversationRow({ mode: ConversationMode.HUMAN, assignedStaffId: STAFF_ID })),
+    resumeAiConversation: vi.fn().mockResolvedValue(fakeConversationRow({ mode: ConversationMode.AI, assignedStaffId: null })),
     updateConversationStatus: vi.fn().mockResolvedValue(fakeConversationRow({ status: ConversationStatus.RESOLVED })),
     ...overrides.conversationService,
   } as unknown as ConversationService;
@@ -195,6 +196,30 @@ describe('InboxService', () => {
 
       await expect(service.takeover(CLINIC_ID, CONVERSATION_ID, 'attacker-staff')).rejects.toBeInstanceOf(StaffNotFoundException);
       expect(conversationService.takeoverConversation).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resumeAi', () => {
+    it('validates the staff belongs to the clinic before delegating, passing the reason through', async () => {
+      const { service, conversationService, findFirst } = buildService();
+      await service.resumeAi(CLINIC_ID, CONVERSATION_ID, STAFF_ID, 'patient issue resolved');
+
+      expect(findFirst).toHaveBeenCalledWith({ where: { id: STAFF_ID, clinicId: CLINIC_ID } });
+      expect(conversationService.resumeAiConversation).toHaveBeenCalledWith(CLINIC_ID, CONVERSATION_ID, STAFF_ID, 'patient issue resolved');
+    });
+
+    it('rejects with StaffNotFoundException when the staff does not belong to the clinic, never attempting the resume', async () => {
+      const { service, conversationService } = buildService({ staffLookupResult: null });
+
+      await expect(service.resumeAi(CLINIC_ID, CONVERSATION_ID, 'attacker-staff', 'reason')).rejects.toBeInstanceOf(StaffNotFoundException);
+      expect(conversationService.resumeAiConversation).not.toHaveBeenCalled();
+    });
+
+    it('shapes the result into the same conversation-detail DTO as every other mutation', async () => {
+      const { service } = buildService();
+      const result = await service.resumeAi(CLINIC_ID, CONVERSATION_ID, STAFF_ID, 'reason');
+
+      expect(result.mode).toBe(ConversationMode.AI);
     });
   });
 

@@ -24,6 +24,7 @@ function buildController(overrides: Partial<Record<keyof InboxService, ReturnTyp
     reply: vi.fn().mockResolvedValue({ messageId: 'm1' }),
     markRead: vi.fn().mockResolvedValue({ id: CONVERSATION_ID }),
     takeover: vi.fn().mockResolvedValue({ id: CONVERSATION_ID }),
+    resumeAi: vi.fn().mockResolvedValue({ id: CONVERSATION_ID }),
     updateStatus: vi.fn().mockResolvedValue({ id: CONVERSATION_ID }),
     getAttachmentSignedUrl: vi.fn().mockResolvedValue({ url: 'https://storage.example.test/signed-url', expiresInSeconds: 300 }),
     ...overrides,
@@ -130,6 +131,45 @@ describe('InboxController — HTTP-boundary validation and authenticated-identit
 
     await expect(controller.takeover(staffContext({ role: StaffRole.READ_ONLY }), CONVERSATION_ID)).rejects.toBeInstanceOf(ForbiddenException);
     expect(inboxService.takeover).not.toHaveBeenCalled();
+  });
+
+  describe('resumeAi', () => {
+    it('uses the authenticated staffId and passes the reason through', async () => {
+      const { controller, inboxService } = buildController();
+
+      await controller.resumeAi(staffContext(), CONVERSATION_ID, { reason: 'patient issue resolved' });
+
+      expect(inboxService.resumeAi).toHaveBeenCalledWith(CLINIC_ID, CONVERSATION_ID, STAFF_ID, 'patient issue resolved');
+    });
+
+    it('rejects a body missing reason', async () => {
+      const { controller, inboxService } = buildController();
+
+      await expect(controller.resumeAi(staffContext(), CONVERSATION_ID, {})).rejects.toBeInstanceOf(BadRequestException);
+      expect(inboxService.resumeAi).not.toHaveBeenCalled();
+    });
+
+    it('rejects a blank/whitespace-only reason', async () => {
+      const { controller, inboxService } = buildController();
+
+      await expect(controller.resumeAi(staffContext(), CONVERSATION_ID, { reason: '   ' })).rejects.toBeInstanceOf(BadRequestException);
+      expect(inboxService.resumeAi).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-UUID conversationId', async () => {
+      const { controller } = buildController();
+
+      await expect(controller.resumeAi(staffContext(), 'not-a-uuid', { reason: 'reason' })).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('READ_ONLY staff cannot resume AI', async () => {
+      const { controller, inboxService } = buildController();
+
+      await expect(
+        controller.resumeAi(staffContext({ role: StaffRole.READ_ONLY }), CONVERSATION_ID, { reason: 'reason' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(inboxService.resumeAi).not.toHaveBeenCalled();
+    });
   });
 
   it('READ_ONLY staff cannot change conversation status', async () => {

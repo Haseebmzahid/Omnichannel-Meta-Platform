@@ -98,6 +98,14 @@ export function useTakeover(conversationId: string) {
   });
 }
 
+export function useResumeAi(conversationId: string) {
+  const invalidateConversation = useInvalidateAfterMutation(conversationId);
+  return useMutation({
+    mutationFn: (reason: string) => inboxApi.resumeAi(conversationId, reason),
+    onSuccess: invalidateConversation,
+  });
+}
+
 export function useUpdateStatus(conversationId: string) {
   const invalidateConversation = useInvalidateAfterMutation(conversationId);
   return useMutation({

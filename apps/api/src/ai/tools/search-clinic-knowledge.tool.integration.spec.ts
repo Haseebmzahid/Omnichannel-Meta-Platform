@@ -128,6 +128,91 @@ describe('search_clinic_knowledge tool -> ClinicKnowledgeService (integration)',
     expect(result.output).toEqual({ success: true, found: false, results: [] });
   });
 
+  // Staff-facing knowledge management (Task 7-7) writes to the exact same
+  // KnowledgeDocument table this tool reads, through the exact same
+  // ClinicKnowledgeService instance, with no cache or second store in
+  // between — so the AI tool must see a management create/update/
+  // deactivate/reactivate on its very next call, with no extra wiring.
+  // This is the single end-to-end proof of that: every step below is a
+  // real ClinicKnowledgeService management call followed by a real tool
+  // dispatch against the same live Postgres row.
+  describe('staff-authored management changes are immediately visible to the AI tool (Task 7-7)', () => {
+    const STAFF_ID_FOR_MANAGEMENT = 'staff-knowledge-mgmt';
+
+    it('a newly created active document is found by the very next search, with unchanged and updated content, then excluded once deactivated, then found again once reactivated', async () => {
+      const created = await knowledgeService.createDocument(clinicA.id, STAFF_ID_FOR_MANAGEMENT, {
+        category: KnowledgeCategory.POLICY,
+        title: 'Cancellation policy',
+        body: 'Appointments must be cancelled at least 4 hours in advance to avoid a fee.',
+        tags: ['cancellation', 'policy'],
+      });
+
+      // 1. Created -> immediately searchable, no separate publish/index step.
+      const afterCreate = await registry.dispatch('search_clinic_knowledge', { query: 'cancellation policy' }, contextFor(clinicA.id));
+      expect(afterCreate.success).toBe(true);
+      if (!afterCreate.success) return;
+      const createdOutput = afterCreate.output as { found: boolean; results: Array<{ title: string; body: string }> };
+      expect(createdOutput.found).toBe(true);
+      expect(createdOutput.results.some((r) => r.title === 'Cancellation policy' && r.body.includes('4 hours'))).toBe(true);
+
+      // 2. Updated -> the next search reflects the NEW content, not the old.
+      await knowledgeService.updateDocument(clinicA.id, created.id, STAFF_ID_FOR_MANAGEMENT, {
+        category: KnowledgeCategory.POLICY,
+        title: 'Cancellation policy',
+        body: 'Appointments must be cancelled at least 24 hours in advance to avoid a fee.',
+        tags: ['cancellation', 'policy'],
+      });
+
+      const afterUpdate = await registry.dispatch('search_clinic_knowledge', { query: 'cancellation policy' }, contextFor(clinicA.id));
+      expect(afterUpdate.success).toBe(true);
+      if (!afterUpdate.success) return;
+      const updatedOutput = afterUpdate.output as { found: boolean; results: Array<{ title: string; body: string }> };
+      const updatedMatch = updatedOutput.results.find((r) => r.title === 'Cancellation policy');
+      expect(updatedMatch?.body).toContain('24 hours');
+      // Not `.not.toContain('4 hours in advance')` — "24 hours in advance"
+      // itself contains that exact substring, which would make this
+      // assertion impossible to satisfy regardless of whether the old
+      // wording is really gone. The leading "at least " anchors it to the
+      // original sentence specifically.
+      expect(updatedMatch?.body).not.toContain('at least 4 hours in advance');
+
+      // 3. Deactivated -> excluded from the very next search.
+      await knowledgeService.updateStatus(clinicA.id, created.id, STAFF_ID_FOR_MANAGEMENT, { isActive: false });
+
+      const afterDeactivate = await registry.dispatch('search_clinic_knowledge', { query: 'cancellation policy' }, contextFor(clinicA.id));
+      expect(afterDeactivate.success).toBe(true);
+      if (!afterDeactivate.success) return;
+      const deactivatedOutput = afterDeactivate.output as { results: Array<{ title: string }> };
+      expect(deactivatedOutput.results.some((r) => r.title === 'Cancellation policy')).toBe(false);
+
+      // 4. Reactivated -> found again — reactivation is the exact inverse
+      // of deactivation, not a separate creation path.
+      await knowledgeService.updateStatus(clinicA.id, created.id, STAFF_ID_FOR_MANAGEMENT, { isActive: true });
+
+      const afterReactivate = await registry.dispatch('search_clinic_knowledge', { query: 'cancellation policy' }, contextFor(clinicA.id));
+      expect(afterReactivate.success).toBe(true);
+      if (!afterReactivate.success) return;
+      const reactivatedOutput = afterReactivate.output as { found: boolean; results: Array<{ title: string; body: string }> };
+      expect(reactivatedOutput.found).toBe(true);
+      expect(reactivatedOutput.results.some((r) => r.title === 'Cancellation policy' && r.body.includes('24 hours'))).toBe(true);
+    });
+
+    it('a document managed for Clinic A is never visible to Clinic B\'s AI turns', async () => {
+      await knowledgeService.createDocument(clinicA.id, STAFF_ID_FOR_MANAGEMENT, {
+        category: KnowledgeCategory.FEE,
+        title: 'Consultation fee',
+        body: 'The standard consultation fee is PKR 2000.',
+        tags: ['fee'],
+      });
+
+      const fromClinicB = await registry.dispatch('search_clinic_knowledge', { query: 'consultation fee' }, contextFor(clinicB.id));
+      expect(fromClinicB.success).toBe(true);
+      if (!fromClinicB.success) return;
+      const output = fromClinicB.output as { results: Array<{ title: string }> };
+      expect(output.results.some((r) => r.title === 'Consultation fee')).toBe(false);
+    });
+  });
+
   it('a raw conversationId/channel/clinicId argument on the tool call is ignored — isolation holds even under an attempted override', async () => {
     const result = await registry.dispatch(
       'search_clinic_knowledge',

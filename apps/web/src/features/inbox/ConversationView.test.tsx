@@ -163,6 +163,71 @@ describe('ConversationView', () => {
     await waitFor(() => expect(inboxApi.takeover).toHaveBeenCalledWith('conv-1'));
   });
 
+  // Human-handoff completion — a clear "Human handling" state in the UI,
+  // and staff can still reply while HUMAN.
+  it('shows a clear "human handling" banner and an enabled composer while mode is HUMAN', async () => {
+    mockReadEndpoints(baseConversation({ mode: 'HUMAN', assignedStaff: { id: 'staff-1', name: 'Dr. Amina' } }), []);
+
+    renderWithProviders(<ConversationView conversationId="conv-1" currentStaffId="staff-1" currentStaffRole="AGENT" />);
+
+    expect(await screen.findByText(/Dr\. Amina is handling this conversation/i)).toBeInTheDocument();
+    expect(screen.getByText(/AI assistant will not reply/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Reply message')).toBeEnabled();
+  });
+
+  it('does not show the AI-handling banner while mode is HUMAN', async () => {
+    mockReadEndpoints(baseConversation({ mode: 'HUMAN' }), []);
+
+    renderWithProviders(<ConversationView conversationId="conv-1" currentStaffId="staff-1" currentStaffRole="AGENT" />);
+
+    await screen.findByText(/handling this conversation/i);
+    expect(screen.queryByText(/AI assistant is currently handling/i)).not.toBeInTheDocument();
+  });
+
+  // Resume-AI action — the documented HUMAN -> AI transition, requiring a
+  // staff-supplied reason.
+  it('shows Resume AI for a HUMAN conversation, requires a reason, and calls the resume-ai endpoint', async () => {
+    mockReadEndpoints(baseConversation({ mode: 'HUMAN' }), []);
+    vi.mocked(inboxApi.resumeAi).mockResolvedValue(baseConversation({ mode: 'AI', assignedStaff: null }));
+    const user = userEvent.setup();
+
+    renderWithProviders(<ConversationView conversationId="conv-1" currentStaffId="staff-1" currentStaffRole="AGENT" />);
+
+    await user.click(await screen.findByRole('button', { name: 'Resume AI' }));
+
+    // The dialog's own submit button shares the same accessible name as the
+    // header trigger that opened it — now that it's open, both exist.
+    const submitButton = screen.getAllByRole('button', { name: 'Resume AI' })[1]!;
+
+    // Submitting with no reason is rejected client-side, before the API is called.
+    await user.click(submitButton);
+    expect(screen.getByRole('alert')).toHaveTextContent(/reason is required/i);
+    expect(inboxApi.resumeAi).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText('Reason for resuming AI'), 'Patient issue resolved.');
+    await user.click(submitButton);
+
+    await waitFor(() => expect(inboxApi.resumeAi).toHaveBeenCalledWith('conv-1', 'Patient issue resolved.'));
+  });
+
+  it('does not offer Resume AI for a conversation in AI mode', async () => {
+    mockReadEndpoints(baseConversation({ mode: 'AI', assignedStaff: null }), []);
+
+    renderWithProviders(<ConversationView conversationId="conv-1" currentStaffId="staff-1" currentStaffRole="AGENT" />);
+
+    await screen.findByText('Fatima Noor');
+    expect(screen.queryByRole('button', { name: 'Resume AI' })).not.toBeInTheDocument();
+  });
+
+  it('READ_ONLY staff cannot see the Resume AI action either', async () => {
+    mockReadEndpoints(baseConversation({ mode: 'HUMAN' }), []);
+
+    renderWithProviders(<ConversationView conversationId="conv-1" currentStaffId="staff-1" currentStaffRole="READ_ONLY" />);
+
+    await screen.findByText('Fatima Noor');
+    expect(screen.queryByRole('button', { name: 'Resume AI' })).not.toBeInTheDocument();
+  });
+
   // 10. Status change
   it('changes conversation status via the select and calls the status endpoint', async () => {
     mockReadEndpoints(baseConversation({ status: 'OPEN' }), []);

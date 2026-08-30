@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Bot } from 'lucide-react';
+import { Bot, UserCheck } from 'lucide-react';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { ApiError } from '../../lib/api/client';
@@ -77,6 +77,15 @@ export function ConversationView({ conversationId, currentStaffId, currentStaffR
           <span className="flex items-center gap-1.5">
             <Bot className="size-3.5 text-ai" aria-hidden="true" />
             The AI assistant is currently handling this conversation.
+          </span>
+        </div>
+      )}
+
+      {conversation.mode === ConversationMode.HUMAN && (
+        <div className="flex items-center justify-between gap-3 border-b border-border bg-human-soft px-4 py-2 text-[12.5px] text-ink">
+          <span className="flex items-center gap-1.5">
+            <UserCheck className="size-3.5 text-human" aria-hidden="true" />
+            {conversation.assignedStaff ? `${conversation.assignedStaff.name} is handling this conversation.` : 'A staff member is handling this conversation.'} The AI assistant will not reply.
           </span>
         </div>
       )}

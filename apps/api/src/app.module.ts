@@ -6,6 +6,7 @@ import { ChannelOutboundModule } from './channels/channel-outbound.module';
 import { InstagramModule } from './channels/instagram/instagram.module';
 import { MessengerModule } from './channels/messenger/messenger.module';
 import { WhatsAppModule } from './channels/whatsapp/whatsapp.module';
+import { CustomersModule } from './customers/customers.module';
 import { HealthController } from './health.controller';
 import { InboxModule } from './inbox/inbox.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
@@ -33,6 +34,11 @@ import { StaffModule } from './staff/staff.module';
     // that KnowledgeModule has one, mirroring every other feature module's
     // explicit registration.
     KnowledgeModule,
+    // The customer/contact export API — clinic-scoped, authenticated,
+    // read-only (see customers/customers.controller.ts's own header
+    // comment). Registered directly, mirroring every other feature
+    // module's explicit registration above.
+    CustomersModule,
     // Task 7-10 — storage foundation only (MediaStorage/MEDIA_STORAGE
     // token). No controller, no consumer yet — registered here so a future
     // download-and-rehost pipeline can inject MEDIA_STORAGE without new

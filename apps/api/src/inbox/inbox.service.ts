@@ -119,6 +119,15 @@ export class InboxService {
     return toConversationDetail(conversation);
   }
 
+  // The documented inverse of takeover() above — HUMAN -> AI ("staff
+  // resumes AI"). Same staff-belongs-to-clinic defense-in-depth check as
+  // every other assignment/attribution-bearing mutation in this file.
+  async resumeAi(clinicId: string, conversationId: string, staffId: string, reason: string): Promise<InboxConversationDetail> {
+    await this.assertStaffBelongsToClinic(clinicId, staffId);
+    const conversation = await this.conversationService.resumeAiConversation(clinicId, conversationId, staffId, reason);
+    return toConversationDetail(conversation);
+  }
+
   async updateStatus(clinicId: string, conversationId: string, status: ConversationStatus): Promise<InboxConversationDetail> {
     const conversation = await this.conversationService.updateConversationStatus(clinicId, conversationId, status);
     return toConversationDetail(conversation);

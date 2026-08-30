@@ -280,6 +280,95 @@ describe('ConversationService', () => {
     });
   });
 
+  describe('resumeAiConversation', () => {
+    it('transitions HUMAN -> AI, clears the staff assignment, and records the reason', async () => {
+      const conversation = await createConversation({ text: 'resume test' });
+      await prisma.conversation.update({ where: { id: conversation.id }, data: { mode: ConversationMode.HUMAN, assignedStaffId: staff.id } });
+
+      const result = await conversationService.resumeAiConversation(clinicA.id, conversation.id, staff.id, 'Issue resolved, AI can continue.');
+
+      expect(result.mode).toBe(ConversationMode.AI);
+      expect(result.assignedStaff).toBeNull();
+      expect(result.internalNotes).toEqual(expect.arrayContaining([expect.stringContaining('Issue resolved, AI can continue.')]));
+    });
+
+    it('never exposes the reason as a separate, invented field — only appended to the existing internalNotes list', async () => {
+      const conversation = await createConversation({ text: 'resume note shape test' });
+      await prisma.conversation.update({ where: { id: conversation.id }, data: { mode: ConversationMode.HUMAN } });
+
+      const result = await conversationService.resumeAiConversation(clinicA.id, conversation.id, staff.id, 'patient satisfied');
+
+      expect(result.internalNotes).toHaveLength(1);
+    });
+
+    it('rejects a resume attempt when mode is not HUMAN (AI)', async () => {
+      const conversation = await createConversation({ text: 'invalid resume from AI' });
+      expect(conversation.mode).toBe(ConversationMode.AI);
+
+      await expect(conversationService.resumeAiConversation(clinicA.id, conversation.id, staff.id, 'reason')).rejects.toBeInstanceOf(
+        InvalidModeTransitionException,
+      );
+    });
+
+    it('rejects a resume attempt when mode is PENDING', async () => {
+      const conversation = await createConversation({ text: 'invalid resume from PENDING' });
+      await prisma.conversation.update({ where: { id: conversation.id }, data: { mode: ConversationMode.PENDING } });
+
+      await expect(conversationService.resumeAiConversation(clinicA.id, conversation.id, staff.id, 'reason')).rejects.toBeInstanceOf(
+        InvalidModeTransitionException,
+      );
+    });
+
+    it('rejects a resume attempt when mode is PAUSED or SUSPENDED', async () => {
+      for (const mode of [ConversationMode.PAUSED, ConversationMode.SUSPENDED] as const) {
+        const conversation = await createConversation({ text: `invalid resume from ${mode}` });
+        await prisma.conversation.update({ where: { id: conversation.id }, data: { mode } });
+
+        await expect(conversationService.resumeAiConversation(clinicA.id, conversation.id, staff.id, 'reason')).rejects.toBeInstanceOf(
+          InvalidModeTransitionException,
+        );
+      }
+    });
+
+    it('never clears the staff assignment when the transition is rejected', async () => {
+      const conversation = await createConversation({ text: 'no assignment change on rejected resume' });
+      await prisma.conversation.update({ where: { id: conversation.id }, data: { mode: ConversationMode.PENDING, assignedStaffId: staff.id } });
+
+      await expect(conversationService.resumeAiConversation(clinicA.id, conversation.id, staff.id, 'reason')).rejects.toThrow();
+
+      const unchanged = await prisma.conversation.findUnique({ where: { id: conversation.id } });
+      expect(unchanged?.mode).toBe(ConversationMode.PENDING);
+      expect(unchanged?.assignedStaffId).toBe(staff.id);
+    });
+
+    it('is clinic-scoped — cannot resume AI for another clinic\'s conversation', async () => {
+      const conversation = await createConversation({ text: 'cross-clinic resume test' });
+      await prisma.conversation.update({ where: { id: conversation.id }, data: { mode: ConversationMode.HUMAN } });
+
+      await expect(conversationService.resumeAiConversation(clinicB.id, conversation.id, staff.id, 'reason')).rejects.toThrow('was not found');
+    });
+
+    it('a message sent while HUMAN is visible to the AI as prior assistant context after resume (architecture already permits this)', async () => {
+      const conversation = await createConversation({ text: 'patient question' });
+      await prisma.conversation.update({ where: { id: conversation.id }, data: { mode: ConversationMode.HUMAN } });
+      await messageService.persistOutboundMessage({
+        clinicId: clinicA.id,
+        conversationId: conversation.id,
+        direction: 'OUTBOUND',
+        senderType: 'STAFF',
+        senderStaffId: staff.id,
+        contentType: MessageContentType.TEXT,
+        text: 'The doctor is available at 3pm.',
+        idempotencyKey: `resume-context-${randomUUID()}`,
+      });
+
+      await conversationService.resumeAiConversation(clinicA.id, conversation.id, staff.id, 'handled');
+
+      const history = await messageService.getRecentConversationMessages({ clinicId: clinicA.id, conversationId: conversation.id });
+      expect(history.some((m) => m.text === 'The doctor is available at 3pm.' && m.senderType === 'STAFF')).toBe(true);
+    });
+  });
+
   describe('updateConversationStatus', () => {
     it('R. transitions between documented status values and manages resolvedAt', async () => {
       const conversation = await createConversation({ text: 'status transition test' });

@@ -1,4 +1,4 @@
-import { BookOpen, Inbox, Users } from 'lucide-react';
+import { BookOpen, Inbox, UserRound, Users } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 
@@ -8,8 +8,13 @@ import { cn } from '../../lib/utils';
 // itself — the backend remains the actual authority on what each role can
 // *do* once on a page (e.g. StaffPage's mutations still require
 // non-READ_ONLY, enforced server-side regardless of what this list shows).
+// "Customers" was added alongside them for the customer/contact export
+// feature — visible to every role for the same reason: the backend export
+// route has no mutation-role gate (CustomersController is read-only),
+// unlike Staff/Knowledge's write routes.
 const NAV_ITEMS = [
   { to: '/inbox', label: 'Inbox', icon: Inbox },
+  { to: '/customers', label: 'Customers', icon: UserRound },
   { to: '/staff', label: 'Staff', icon: Users },
   { to: '/knowledge', label: 'Knowledge', icon: BookOpen },
 ] as const;

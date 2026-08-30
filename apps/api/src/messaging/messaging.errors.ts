@@ -32,15 +32,17 @@ export class MessageIdempotencyKeyConflictException extends ConflictException {
   }
 }
 
-// Task 7-1 — the staff-inbox mode transition boundary. Per
-// docs/architecture/03-conversation-and-inbox.md §5, only a fixed set of
-// mode transitions is documented at all; this task implements exactly one
-// of them (PENDING -> HUMAN, "staff takes over"). Attempting a takeover
-// from any other mode (AI, HUMAN, PAUSED, SUSPENDED) is not a documented
-// transition and is rejected here rather than silently allowed — see
-// conversation.service.ts's takeoverConversation() and the Task 7-1 report
-// for why the other documented transitions (HUMAN -> AI, any -> PAUSED,
-// SUSPENDED -> AI) are intentionally out of this task's scope.
+// Task 7-1 (extended by the human-handoff completion task) — the staff-
+// inbox mode transition boundary. Per docs/architecture/03-conversation-
+// and-inbox.md §5, only a fixed set of mode transitions is documented at
+// all; two of them are implemented — PENDING -> HUMAN ("staff takes
+// over", conversation.service.ts's takeoverConversation()) and its
+// documented inverse, HUMAN -> AI ("staff resumes AI",
+// resumeAiConversation()). Attempting either from any other starting mode
+// is not a documented transition and is rejected here rather than
+// silently allowed. `any -> PAUSED` and `SUSPENDED -> AI` (supervisor
+// override only) remain out of scope — no manual pause action or
+// supervisor-override path exists yet, so there is nothing to guard here.
 export class InvalidModeTransitionException extends ConflictException {
   constructor(from: ConversationMode, to: ConversationMode) {
     super(`Cannot transition conversation mode from ${from} to ${to}.`);

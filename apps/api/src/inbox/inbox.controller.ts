@@ -92,6 +92,23 @@ export class InboxController {
     return this.inboxService.takeover(staff.clinicId, parsedConversationId, staff.staffId);
   }
 
+  // The documented inverse of takeover() above (docs/architecture/
+  // 03-conversation-and-inbox.md §5: "HUMAN -> AI: requires an explicit
+  // staff action and a reason") — a reason is therefore a required body
+  // field, never optional, exactly like takeover() requires no body at all
+  // because PENDING -> HUMAN needs no justification.
+  @Post('conversations/:conversationId/resume-ai')
+  async resumeAi(
+    @CurrentStaff() staff: AuthenticatedStaffContext,
+    @Param('conversationId') conversationId: string,
+    @Body() body: unknown,
+  ): Promise<InboxConversationDetail> {
+    assertCanMutate(staff);
+    const parsedConversationId = parseOrBadRequest(uuidSchema, conversationId, 'conversationId');
+    const parsed = parseOrBadRequest(resumeAiBodySchema, body, 'body');
+    return this.inboxService.resumeAi(staff.clinicId, parsedConversationId, staff.staffId, parsed.reason);
+  }
+
   @Patch('conversations/:conversationId/status')
   async updateStatus(
     @CurrentStaff() staff: AuthenticatedStaffContext,
@@ -168,3 +185,9 @@ const replyBodySchema = z.object({
 });
 
 const updateStatusBodySchema = z.object({ status: statusEnum });
+
+const MAX_RESUME_REASON_LENGTH = 500;
+
+const resumeAiBodySchema = z.object({
+  reason: z.string().trim().min(1).max(MAX_RESUME_REASON_LENGTH),
+});
