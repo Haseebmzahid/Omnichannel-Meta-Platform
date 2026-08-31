@@ -117,6 +117,11 @@ import { createSendMessageTool } from './tools/send-message.tool';
     AiContextService,
     InboundAiService,
   ],
-  exports: [AiOrchestratorService, ToolRegistry, InboundAiService],
+  // AI_PROVIDER exported alongside the rest so HealthController (registered
+  // directly on AppModule, which already imports AiModule) can inject the
+  // same GeminiAIProvider binding for the /health/gemini diagnostic route
+  // below — no new provider or module, just widening this module's export
+  // list to include a token it already binds internally.
+  exports: [AiOrchestratorService, ToolRegistry, InboundAiService, AI_PROVIDER],
 })
 export class AiModule {}
