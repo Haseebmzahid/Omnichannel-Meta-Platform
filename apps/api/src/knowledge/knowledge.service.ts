@@ -1,7 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import { EMBEDDING_PROVIDER, type EmbeddingProvider } from '../ai/embedding-provider.interface';
+import { config } from '../config';
 import type { KnowledgeCategory } from '../generated/prisma/enums';
 import type { KnowledgeDocument } from '../generated/prisma/client';
+import { logger } from '../logging/logger';
 import { PrismaService } from '../prisma/prisma.service';
+import { bestSemanticScore, fuseScore, MAX_HYBRID_RESULTS, normalizeKeywordScores, RELEVANCE_THRESHOLD } from './knowledge-hybrid-search';
 import { KnowledgeDocumentNotFoundException } from './knowledge.errors';
 import type {
   CreateKnowledgeDocumentInput,
@@ -75,36 +79,107 @@ interface KnowledgeCandidate {
   title: string;
   body: string;
   tags: string[];
+  embedding: number[];
 }
 
 @Injectable()
 export class ClinicKnowledgeService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(EMBEDDING_PROVIDER) private readonly embeddingProvider: EmbeddingProvider,
+  ) {}
 
+  // Task 7-8 (Adeeba multilingual retrieval) — hybrid keyword + semantic
+  // search. The keyword scorer above is unchanged; semantic embedding is
+  // layered on top and the two are fused (knowledge-hybrid-search.ts) so
+  // cross-lingual queries (English / Urdu script / Roman Urdu) can match
+  // documents authored in a different script than the query, which exact
+  // token overlap alone cannot do.
+  //
+  // Two independent, deliberate fallbacks to the pre-hybrid keyword-only
+  // path, both returning legacyResult(): the KNOWLEDGE_SEMANTIC_SEARCH_ENABLED
+  // kill-switch, and an embedding-provider outage for this call. Without
+  // the second one, an outage would make every candidate's semantic score
+  // 0, and 0.3 (keyword's max weighted contribution) can never clear
+  // RELEVANCE_THRESHOLD (0.5) — silently turning a provider hiccup into
+  // "nothing is ever found", which is worse than temporarily losing the
+  // semantic half of retrieval.
   async search(input: SearchClinicKnowledgeInput): Promise<SearchClinicKnowledgeResult> {
     const normalizedQuery = normalize(input.query);
     const queryTokens = queryTokensFor(input.query);
 
     // `select` — not a post-hoc projection — so nothing beyond what
-    // scoring actually needs is ever materialized. `id`/`tags` are needed
-    // here for scoring/deterministic ordering but are stripped again below
-    // before anything leaves this method (requirement 8/N: never leak
-    // Prisma internals — id/tags/isActive/clinicId/timestamps are all
-    // internal bookkeeping the model has no use for).
+    // scoring actually needs is ever materialized. `id`/`tags`/`embedding`
+    // are needed here for scoring/deterministic ordering but are stripped
+    // again below before anything leaves this method (requirement 8/N:
+    // never leak Prisma internals — id/tags/isActive/clinicId/timestamps
+    // are all internal bookkeeping the model has no use for).
     const candidates = await this.prisma.knowledgeDocument.findMany({
       where: { clinicId: input.clinicId, isActive: true },
-      select: { id: true, category: true, title: true, body: true, tags: true },
+      select: { id: true, category: true, title: true, body: true, tags: true, embedding: true },
       take: CANDIDATE_FETCH_CAP,
     });
 
+    const keywordScores = candidates.map((candidate) => scoreCandidate(candidate, queryTokens, normalizedQuery));
+
+    if (!config.KNOWLEDGE_SEMANTIC_SEARCH_ENABLED) {
+      return legacyResult(candidates, keywordScores);
+    }
+
+    const queryEmbeddings = await this.embedQueries(input.query, input.queryTranslation);
+    if (queryEmbeddings.length === 0) {
+      return legacyResult(candidates, keywordScores);
+    }
+
+    const keywordScoresNorm = normalizeKeywordScores(keywordScores);
     const results = candidates
-      .map((candidate) => ({ candidate, score: scoreCandidate(candidate, queryTokens, normalizedQuery) }))
-      .filter((entry) => entry.score > 0)
+      .map((candidate, i) => {
+        const hasEmbedding = candidate.embedding.length > 0;
+        const score = fuseScore({
+          semanticScore: hasEmbedding ? bestSemanticScore(candidate.embedding, queryEmbeddings) : 0,
+          // Non-null: keywordScoresNorm is normalizeKeywordScores(keywordScores),
+          // itself candidates.map(...) — same length/order throughout.
+          keywordScoreNorm: keywordScoresNorm[i]!,
+        });
+        // A document with no embedding yet (not-yet-backfilled, or a
+        // one-off embed-on-write failure) can never clear RELEVANCE_THRESHOLD
+        // on keyword alone — KEYWORD_WEIGHT (0.3) is its hard ceiling, below
+        // the 0.5 threshold semantic-bearing documents are judged against.
+        // Falling back to the pre-hybrid score>0 rule for this one row
+        // specifically is what actually makes "an un-embedded document
+        // degrades to keyword-only" true, rather than "is invisible until
+        // backfilled" — the graceful-degradation the schema/embed-on-write
+        // comments already promise.
+        const eligible = hasEmbedding ? score >= RELEVANCE_THRESHOLD : keywordScores[i]! > 0;
+        return { candidate, score, eligible };
+      })
+      .filter((entry) => entry.eligible)
       .sort((a, b) => compareRanked(a, b))
-      .slice(0, MAX_RESULTS)
+      .slice(0, MAX_HYBRID_RESULTS)
       .map(({ candidate }) => ({ category: candidate.category, title: candidate.title, body: candidate.body }));
 
     return { found: results.length > 0, results };
+  }
+
+  // Embeds the verbatim query and, when Gemini supplied a meaningfully
+  // different queryTranslation (its own plain-English/Urdu-script gloss —
+  // the Roman-Urdu/cross-script hedge), that too, in parallel. Returns []
+  // — never throws — on any embedding-provider failure, so a transient
+  // outage degrades search() to keyword-only for this call rather than
+  // failing the AI turn.
+  private async embedQueries(query: string, queryTranslation: string | undefined): Promise<number[][]> {
+    const hasDistinctTranslation = Boolean(queryTranslation) && normalize(queryTranslation ?? '') !== normalize(query);
+    const texts = hasDistinctTranslation ? [query, queryTranslation as string] : [query];
+
+    try {
+      return await Promise.all(texts.map((text) => this.embeddingProvider.embed(text, 'RETRIEVAL_QUERY')));
+    } catch (err) {
+      logger.error(
+        { err: err instanceof Error ? { name: err.name, message: err.message } : { message: 'Unknown error' } },
+        'Knowledge search: query embedding failed, falling back to keyword-only for this call',
+      );
+      return [];
+    }
   }
 
   // --- Task 7-7: staff-facing management methods --------------------------
@@ -128,6 +203,7 @@ export class ClinicKnowledgeService {
     const document = await this.prisma.knowledgeDocument.create({
       data: { clinicId, category: input.category, title: input.title, body: input.body, tags: input.tags, updatedBy: staffId },
     });
+    await this.embedDocumentBestEffort(document.id, input.title, input.body);
     return toKnowledgeDocumentSummary(document);
   }
 
@@ -137,7 +213,30 @@ export class ClinicKnowledgeService {
       where: { id },
       data: { category: input.category, title: input.title, body: input.body, tags: input.tags, updatedBy: staffId },
     });
+    await this.embedDocumentBestEffort(document.id, input.title, input.body);
     return toKnowledgeDocumentSummary(document);
+  }
+
+  // Best-effort, deliberately outside the create/update transaction above:
+  // a knowledge-authoring save must never fail because the embedding
+  // provider is slow or down. On failure the row simply keeps its previous
+  // (or default empty) embedding and search() degrades that one document
+  // to keyword-only until a later edit, or the backfill script
+  // (scripts/backfill-knowledge-embeddings.ts), fills it in.
+  private async embedDocumentBestEffort(id: string, title: string, body: string): Promise<void> {
+    if (!config.KNOWLEDGE_SEMANTIC_SEARCH_ENABLED) return;
+    try {
+      const embedding = await this.embeddingProvider.embed(`${title}\n${body}`, 'RETRIEVAL_DOCUMENT', title);
+      await this.prisma.knowledgeDocument.update({
+        where: { id },
+        data: { embedding, embeddingModel: config.GEMINI_EMBEDDING_MODEL, embeddingUpdatedAt: new Date() },
+      });
+    } catch (err) {
+      logger.error(
+        { id, err: err instanceof Error ? { name: err.name, message: err.message } : { message: 'Unknown error' } },
+        'Knowledge document: embedding failed, saved without semantic search for now',
+      );
+    }
   }
 
   async updateStatus(clinicId: string, id: string, staffId: string, input: UpdateKnowledgeDocumentStatusInput): Promise<KnowledgeDocumentSummaryDto> {
@@ -174,6 +273,22 @@ function toKnowledgeDocumentSummary(document: KnowledgeDocument): KnowledgeDocum
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
   };
+}
+
+// The pre-hybrid keyword-only path: score > 0, top MAX_RESULTS. Shared by
+// the KNOWLEDGE_SEMANTIC_SEARCH_ENABLED kill-switch and by an embedding-
+// provider outage — see search()'s own comment for why the latter must
+// fall all the way back to this rather than running the hybrid threshold
+// against an unconditionally-0 semantic score.
+function legacyResult(candidates: KnowledgeCandidate[], keywordScores: number[]): SearchClinicKnowledgeResult {
+  const results = candidates
+    // Non-null: keywordScores is candidates.map(...), same length/order.
+    .map((candidate, i) => ({ candidate, score: keywordScores[i]! }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => compareRanked(a, b))
+    .slice(0, MAX_RESULTS)
+    .map(({ candidate }) => ({ category: candidate.category, title: candidate.title, body: candidate.body }));
+  return { found: results.length > 0, results };
 }
 
 // Requirement 7 — deterministic ordering: highest score first; any tie

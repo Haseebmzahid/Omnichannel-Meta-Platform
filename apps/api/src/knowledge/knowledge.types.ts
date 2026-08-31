@@ -3,6 +3,12 @@ import type { KnowledgeCategory } from '../generated/prisma/enums';
 export interface SearchClinicKnowledgeInput {
   clinicId: string;
   query: string;
+  // Adeeba multilingual retrieval (Task 7-8) — Gemini's own best-effort
+  // plain-English/Urdu-script gloss of the patient's question, used
+  // alongside the verbatim `query` for semantic embedding. Optional,
+  // cross-lingual hedge specifically for Roman Urdu, not a translation
+  // service — see knowledge.service.ts's search() for how it's used.
+  queryTranslation?: string;
 }
 
 // The minimum a caller (the AI tool) needs — never the full KnowledgeDocument

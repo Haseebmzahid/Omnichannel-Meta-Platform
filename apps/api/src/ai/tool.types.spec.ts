@@ -3,6 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { AIContext } from './ai-context.types';
+import type { GroundingState } from './tool.types';
 import { ToolRegistry } from './tool.types';
 
 const fakeContext: AIContext = {
@@ -104,5 +105,144 @@ describe('ToolRegistry', () => {
     expect(descriptors).toHaveLength(1);
     expect(descriptors[0]?.name).toBe('echo');
     expect(descriptors[0]?.parameters).toMatchObject({ type: 'object' });
+  });
+});
+
+// Task 7-8's deterministic escalation-enforcement mechanism. A small,
+// generic fixture registry (search/reply/escalate) mirroring the real
+// search_clinic_knowledge/send_message/escalate_to_human wiring's shape,
+// deliberately not importing those real tool files — this suite proves the
+// generic ToolRegistry mechanism in isolation, the same way the tests
+// above use 'echo'/'boom' rather than a real domain tool.
+describe('ToolRegistry — grounding gate (Task 7-8)', () => {
+  function buildFixtureRegistry() {
+    const replyHandlerCalls: string[] = [];
+    const registry = new ToolRegistry();
+
+    registry.register({
+      name: 'search',
+      description: 'test tool',
+      inputSchema: z.object({ found: z.boolean() }),
+      handler: async (input: { found: boolean }) => ({ found: input.found }),
+      grounding: { effect: (output: { found: boolean }) => (output.found ? 'closes' : 'opens') },
+    });
+
+    registry.register({
+      name: 'reply',
+      description: 'test tool',
+      inputSchema: z.object({ text: z.string() }),
+      handler: async (input: { text: string }) => {
+        replyHandlerCalls.push(input.text);
+        return { sent: true, text: input.text };
+      },
+      grounding: {
+        blockedByOpenGap: {
+          redirectToTool: 'escalate',
+          buildFallbackInput: () => ({ reason: 'auto', message: 'fallback-ack' }),
+        },
+      },
+    });
+
+    registry.register({
+      name: 'escalate',
+      description: 'test tool',
+      inputSchema: z.object({ reason: z.string(), message: z.string() }),
+      handler: async () => ({ escalated: true }),
+      grounding: { effect: () => 'closes' },
+    });
+
+    return { registry, replyHandlerCalls };
+  }
+
+  it("a tool's 'opens' effect sets gapOpen on the shared per-turn state", async () => {
+    const { registry } = buildFixtureRegistry();
+    const grounding: GroundingState = { gapOpen: false };
+
+    await registry.dispatch('search', { found: false }, fakeContext, grounding);
+
+    expect(grounding.gapOpen).toBe(true);
+  });
+
+  it("a tool's 'closes' effect clears gapOpen", async () => {
+    const { registry } = buildFixtureRegistry();
+    const grounding: GroundingState = { gapOpen: true };
+
+    await registry.dispatch('search', { found: true }, fakeContext, grounding);
+
+    expect(grounding.gapOpen).toBe(false);
+  });
+
+  it('redirects a blockedByOpenGap tool while the gap is open, and never runs its own handler', async () => {
+    const { registry, replyHandlerCalls } = buildFixtureRegistry();
+    const grounding: GroundingState = { gapOpen: true };
+
+    const result = await registry.dispatch('reply', { text: 'a guessed answer' }, fakeContext, grounding);
+
+    expect(replyHandlerCalls).toEqual([]); // the blocked tool's own handler never ran
+    expect(result).toEqual({
+      success: true,
+      output: { redirected: true, from: 'reply', to: 'escalate', result: { escalated: true } },
+    });
+    expect(grounding.gapOpen).toBe(false); // the redirect target's own 'closes' effect still applies
+  });
+
+  it('dispatches a blockedByOpenGap tool normally once the gap is closed', async () => {
+    const { registry, replyHandlerCalls } = buildFixtureRegistry();
+    const grounding: GroundingState = { gapOpen: false };
+
+    const result = await registry.dispatch('reply', { text: 'a grounded answer' }, fakeContext, grounding);
+
+    expect(replyHandlerCalls).toEqual(['a grounded answer']);
+    expect(result).toEqual({ success: true, output: { sent: true, text: 'a grounded answer' } });
+  });
+
+  it('falls through to normal dispatch if the redirect target is not registered', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'reply',
+      description: 'test tool',
+      inputSchema: z.object({ text: z.string() }),
+      handler: async (input: { text: string }) => ({ sent: true, text: input.text }),
+      grounding: { blockedByOpenGap: { redirectToTool: 'does_not_exist', buildFallbackInput: () => ({}) } },
+    });
+    const grounding: GroundingState = { gapOpen: true };
+
+    const result = await registry.dispatch('reply', { text: 'hello' }, fakeContext, grounding);
+
+    expect(result).toEqual({ success: true, output: { sent: true, text: 'hello' } });
+  });
+
+  it('falls through to normal dispatch if the fallback input fails the redirect target\'s own validation', async () => {
+    const { registry, replyHandlerCalls } = buildFixtureRegistry();
+    const brokenRegistry = registry;
+    // Overwrite 'reply' with a fallback builder that omits a required field.
+    brokenRegistry.register({
+      name: 'reply2',
+      description: 'test tool',
+      inputSchema: z.object({ text: z.string() }),
+      handler: async (input: { text: string }) => {
+        replyHandlerCalls.push(input.text);
+        return { sent: true, text: input.text };
+      },
+      grounding: {
+        blockedByOpenGap: { redirectToTool: 'escalate', buildFallbackInput: () => ({ reason: 'auto' }) /* missing `message` */ },
+      },
+    });
+    const grounding: GroundingState = { gapOpen: true };
+
+    const result = await brokenRegistry.dispatch('reply2', { text: 'hello' }, fakeContext, grounding);
+
+    expect(replyHandlerCalls).toEqual(['hello']); // fell through to the original handler
+    expect(result).toEqual({ success: true, output: { sent: true, text: 'hello' } });
+  });
+
+  it('with no grounding state passed at all, grounding-aware tools behave like ordinary tools', async () => {
+    const { registry, replyHandlerCalls } = buildFixtureRegistry();
+
+    await registry.dispatch('search', { found: false }, fakeContext);
+    const result = await registry.dispatch('reply', { text: 'no gate without state' }, fakeContext);
+
+    expect(replyHandlerCalls).toEqual(['no gate without state']);
+    expect(result).toEqual({ success: true, output: { sent: true, text: 'no gate without state' } });
   });
 });

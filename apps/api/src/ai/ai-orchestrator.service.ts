@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { AIContextMessage, AIRequest, AIResponse, AIToolInvocationRecord } from './ai-context.types';
 import { AI_PROVIDER, type AIMessage, type AIProvider } from './ai-provider.interface';
+import type { GroundingState } from './tool.types';
 import { ToolRegistry } from './tool.types';
 
 // Task 4C-5, Part 2 — the AI orchestration loop.
@@ -31,6 +32,14 @@ export class AiOrchestratorService {
     const messages = this.buildInitialMessages(request);
     const tools = this.toolRegistry.describeAll();
     const toolCalls: AIToolInvocationRecord[] = [];
+    // Task 7-8's deterministic escalation gate — fresh per inbound message,
+    // never persisted across turns/conversations. Threaded through every
+    // dispatch() call this turn as an opaque state bag; this orchestrator
+    // never inspects it or knows which tool names participate (see
+    // tool.types.ts's ToolGroundingMetadata for where that knowledge lives)
+    // — staying "one engine, tool-agnostic" per this class's own header
+    // comment.
+    const grounding: GroundingState = { gapOpen: false };
 
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
       const response = await this.provider.generate({ messages, tools });
@@ -40,7 +49,7 @@ export class AiOrchestratorService {
       }
 
       for (const call of response.toolCalls) {
-        const result = await this.toolRegistry.dispatch(call.name, call.arguments, request.context);
+        const result = await this.toolRegistry.dispatch(call.name, call.arguments, request.context, grounding);
         toolCalls.push({ name: call.name, result });
         messages.push({
           role: 'tool',

@@ -1,12 +1,24 @@
 import 'reflect-metadata';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AIContext } from '../ai-context.types';
+import type { EmbeddingProvider } from '../embedding-provider.interface';
 import type { Clinic } from '../../generated/prisma/client';
 import { KnowledgeCategory } from '../../generated/prisma/enums';
 import { ClinicKnowledgeService } from '../../knowledge/knowledge.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ToolRegistry } from '../tool.types';
 import { createSearchClinicKnowledgeTool } from './search-clinic-knowledge.tool';
+
+// This suite predates Task 7-8's hybrid retrieval and asserts the
+// keyword-scoring/clinic-isolation contract, unchanged — a rejecting
+// embeddingProvider double keeps it exercising ClinicKnowledgeService's own
+// documented "embedding-provider outage degrades to keyword-only" fallback,
+// rather than making a real network call in an integration test.
+const noEmbedding: EmbeddingProvider = {
+  embed: async () => {
+    throw new Error('embedding disabled for this integration test');
+  },
+};
 
 // Integration test against the real local dev Postgres — same convention as
 // ai/tools/send-message.tool.integration.spec.ts. Proves the documented Task
@@ -22,7 +34,7 @@ import { createSearchClinicKnowledgeTool } from './search-clinic-knowledge.tool'
 
 describe('search_clinic_knowledge tool -> ClinicKnowledgeService (integration)', () => {
   const prisma = new PrismaService();
-  const knowledgeService = new ClinicKnowledgeService(prisma);
+  const knowledgeService = new ClinicKnowledgeService(prisma, noEmbedding);
   const registry = new ToolRegistry();
   registry.register(createSearchClinicKnowledgeTool(knowledgeService));
 

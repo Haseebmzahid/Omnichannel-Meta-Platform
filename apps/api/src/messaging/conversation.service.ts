@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { Conversation, Prisma } from '../generated/prisma/client';
 import { ConversationMode, ConversationStatus } from '../generated/prisma/enums';
 import type { ChannelKey } from '../generated/prisma/enums';
+import { logger } from '../logging/logger';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConversationNotFoundException, InvalidModeTransitionException, InvalidStatusTransitionException } from './messaging.errors';
 import type { Db } from './messaging.db';
@@ -232,6 +233,36 @@ export class ConversationService {
     }
 
     return this.getConversationForClinic(clinicId, conversationId);
+  }
+
+  // Task 7-8 (Adeeba multilingual retrieval) — the AI -> PENDING transition
+  // docs/architecture/03-conversation-and-inbox.md §5 already documents
+  // ("on AI-initiated escalation... low confidence... one realistic
+  // acknowledgement is sent") but that, until now, nothing ever triggered.
+  // Called from escalate-to-human.tool.ts when Adeeba cannot confidently
+  // answer a clinic-fact question — surfaces the conversation in the
+  // existing staff Inbox exactly like any other PENDING conversation, no
+  // new UI needed.
+  //
+  // Deliberately non-throwing and idempotent, unlike takeoverConversation()
+  // above: this is an internal AI safety net, not a staff-initiated HTTP
+  // action a caller needs a clear rejection from. If the conversation has
+  // already moved on (a human already took over, staff paused it, ...) by
+  // the time this runs, that is an unremarkable race, not an error worth
+  // surfacing to the model as a tool failure — it simply returns false and
+  // the caller (the tool handler) still sends its acknowledgement text.
+  // Same guarded-`updateMany` race protection as takeoverConversation().
+  async escalateToHuman(clinicId: string, conversationId: string, reason: string): Promise<boolean> {
+    const result = await this.prisma.conversation.updateMany({
+      where: { id: conversationId, clinicId, mode: ConversationMode.AI },
+      data: { mode: ConversationMode.PENDING },
+    });
+
+    const escalated = result.count > 0;
+    if (escalated) {
+      logger.info({ clinicId, conversationId, reason }, 'Conversation escalated to PENDING — AI could not confidently answer');
+    }
+    return escalated;
   }
 
   // The documented inverse of takeoverConversation() above: HUMAN -> AI

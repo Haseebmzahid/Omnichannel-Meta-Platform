@@ -252,4 +252,47 @@ describe('createSendMessageTool', () => {
     const keys = sendText.mock.calls.map((call) => call[0].idempotencyKey);
     expect(keys[0]).not.toBe(keys[1]);
   });
+
+  // Task 7-8's deterministic escalation gate — this tool declares
+  // blockedByOpenGap; ToolRegistry.dispatch() (tested in isolation in
+  // tool.types.spec.ts) is what actually enforces the redirect. These
+  // tests only check the declared metadata itself: the redirect target
+  // and the fallback message it builds.
+  describe('grounding.blockedByOpenGap metadata', () => {
+    it('17. redirects to escalate_to_human', () => {
+      const tool = createSendMessageTool({ sendText: vi.fn() });
+      expect(tool.grounding?.blockedByOpenGap?.redirectToTool).toBe('escalate_to_human');
+    });
+
+    it('18. the fallback message never contains the original (blocked) reply text', () => {
+      const tool = createSendMessageTool({ sendText: vi.fn() });
+      const fallback = tool.grounding?.blockedByOpenGap?.buildFallbackInput({ text: 'the actual guessed clinic fact' }, fakeContext) as {
+        reason: string;
+        patientFacingMessage: string;
+      };
+
+      expect(fallback.patientFacingMessage).not.toContain('the actual guessed clinic fact');
+      expect(fallback.reason.length).toBeGreaterThan(0);
+      expect(fallback.patientFacingMessage.length).toBeGreaterThan(0);
+    });
+
+    it('19. picks the Urdu-script template when the blocked text contains Urdu script', () => {
+      const tool = createSendMessageTool({ sendText: vi.fn() });
+      const fallback = tool.grounding?.blockedByOpenGap?.buildFallbackInput({ text: 'آپ کی فیس پانچ ہزار روپے ہے' }, fakeContext) as {
+        patientFacingMessage: string;
+      };
+
+      expect(fallback.patientFacingMessage).toMatch(/[؀-ۿ]/);
+    });
+
+    it('20. picks the English/Roman-Urdu template when the blocked text has no Urdu script', () => {
+      const tool = createSendMessageTool({ sendText: vi.fn() });
+      const fallback = tool.grounding?.blockedByOpenGap?.buildFallbackInput({ text: 'your fee is 5000 rupees' }, fakeContext) as {
+        patientFacingMessage: string;
+      };
+
+      expect(fallback.patientFacingMessage).not.toMatch(/[؀-ۿ]/);
+      expect(fallback.patientFacingMessage.length).toBeGreaterThan(0);
+    });
+  });
 });

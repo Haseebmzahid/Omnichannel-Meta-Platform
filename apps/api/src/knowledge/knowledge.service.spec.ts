@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import type { EmbeddingProvider } from '../ai/embedding-provider.interface';
 import { KnowledgeCategory } from '../generated/prisma/enums';
 import type { PrismaService } from '../prisma/prisma.service';
 import { KnowledgeDocumentNotFoundException } from './knowledge.errors';
@@ -13,12 +14,26 @@ const CLINIC_ID = 'clinic-1';
 // testing the new 4C-12 ranking against real production content, not a toy
 // fixture, is the strongest proof that the required natural-language
 // examples actually work.
-const PILOT_CANDIDATES = PILOT_CLINIC_KNOWLEDGE_DOCUMENTS.map((doc) => ({ id: randomUUID(), ...doc }));
+const PILOT_CANDIDATES = PILOT_CLINIC_KNOWLEDGE_DOCUMENTS.map((doc) => ({ id: randomUUID(), embedding: [], ...doc }));
+
+// This whole file predates Task 7-8's hybrid retrieval and deliberately
+// keeps testing the keyword-only scorer in isolation, unchanged — real
+// multilingual/semantic-fusion behavior gets its own describe block
+// (knowledge.service.hybrid.spec.ts). A rejecting embeddingProvider mock is
+// the correct double for that intent, not an incidental workaround: it
+// exercises search()'s own documented fallback ("an embedding-provider
+// outage degrades to the pre-hybrid keyword-only path"), which is exactly
+// the code path these keyword-scoring assertions need to run against to
+// stay meaningful. embedDocumentBestEffort() (management-method tests
+// below) already swallows this failure internally, by design.
+function fakeEmbeddingProvider(): EmbeddingProvider {
+  return { embed: vi.fn().mockRejectedValue(new Error('embedding disabled for this test')) };
+}
 
 function buildService(findManyResult: unknown[] = PILOT_CANDIDATES) {
   const findMany = vi.fn().mockResolvedValue(findManyResult);
   const prisma = { knowledgeDocument: { findMany } } as unknown as PrismaService;
-  return { service: new ClinicKnowledgeService(prisma), findMany };
+  return { service: new ClinicKnowledgeService(prisma, fakeEmbeddingProvider()), findMany };
 }
 
 function titlesOf(results: Array<{ title: string }>): string[] {
@@ -50,7 +65,7 @@ describe('ClinicKnowledgeService.search — clinic scoping / activity / safety (
   it('a raw database/Prisma error is never caught or reshaped here — it propagates for ToolRegistry to sanitize', async () => {
     const findMany = vi.fn().mockRejectedValue(new Error('connection to postgres://clinic:clinic_dev_password@localhost/clinic_dev failed'));
     const prisma = { knowledgeDocument: { findMany } } as unknown as PrismaService;
-    const service = new ClinicKnowledgeService(prisma);
+    const service = new ClinicKnowledgeService(prisma, fakeEmbeddingProvider());
 
     await expect(service.search({ clinicId: CLINIC_ID, query: 'hours' })).rejects.toThrow();
   });
@@ -211,7 +226,7 @@ describe('ClinicKnowledgeService — staff-facing management methods (Task 7-7)'
       ...overrides,
     };
     const prisma = { knowledgeDocument } as unknown as PrismaService;
-    return { service: new ClinicKnowledgeService(prisma), knowledgeDocument };
+    return { service: new ClinicKnowledgeService(prisma, fakeEmbeddingProvider()), knowledgeDocument };
   }
 
   it('listDocuments scopes by clinicId and never leaks a raw Prisma row shape beyond the DTO', async () => {

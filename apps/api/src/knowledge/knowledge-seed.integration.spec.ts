@@ -1,11 +1,22 @@
 import 'reflect-metadata';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { EmbeddingProvider } from '../ai/embedding-provider.interface';
 import type { Clinic } from '../generated/prisma/client';
 import { KnowledgeCategory } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { ClinicKnowledgeService } from './knowledge.service';
 import { seedClinicKnowledge } from './knowledge-seed';
 import { PILOT_CLINIC_KNOWLEDGE_DOCUMENTS } from './pilot-clinic-knowledge.data';
+
+// See search-clinic-knowledge.tool.integration.spec.ts's identical comment:
+// this suite predates Task 7-8 and exercises the keyword-scoring/seeding
+// contract, unchanged, via ClinicKnowledgeService's own documented
+// embedding-outage fallback rather than a real network call.
+const noEmbedding: EmbeddingProvider = {
+  embed: async () => {
+    throw new Error('embedding disabled for this integration test');
+  },
+};
 
 // Integration test against the real local dev Postgres — same convention as
 // ai/tools/search-clinic-knowledge.tool.integration.spec.ts. Proves the
@@ -21,7 +32,7 @@ import { PILOT_CLINIC_KNOWLEDGE_DOCUMENTS } from './pilot-clinic-knowledge.data'
 
 describe('seedClinicKnowledge -> ClinicKnowledgeService (integration)', () => {
   const prisma = new PrismaService();
-  const knowledgeService = new ClinicKnowledgeService(prisma);
+  const knowledgeService = new ClinicKnowledgeService(prisma, noEmbedding);
 
   let pilotClinic: Clinic;
   let otherClinic: Clinic;

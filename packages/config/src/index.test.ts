@@ -57,6 +57,8 @@ describe('loadConfig', () => {
       DATABASE_URL: 'postgresql://u:p@db.example.com:5432/prod',
       GEMINI_API_KEY: 'test-key',
       GEMINI_MODEL: 'gemini-3.6-flash',
+      GEMINI_EMBEDDING_MODEL: 'gemini-embedding-001',
+      KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: true,
       ...FULL_WHATSAPP_ENV,
       WHATSAPP_API_VERSION: 'v26.0',
       ...FULL_INSTAGRAM_ENV,
@@ -78,6 +80,8 @@ describe('loadConfig', () => {
       LOG_LEVEL: 'info',
       DATABASE_URL: 'postgresql://clinic:clinic_dev_password@localhost:5432/clinic_dev',
       GEMINI_MODEL: 'gemini-3.6-flash',
+      GEMINI_EMBEDDING_MODEL: 'gemini-embedding-001',
+      KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: true,
       WHATSAPP_API_VERSION: 'v26.0',
       INSTAGRAM_API_VERSION: 'v26.0',
       MESSENGER_API_VERSION: 'v26.0',
@@ -238,6 +242,18 @@ describe('loadConfig', () => {
     it('defaults GEMINI_MODEL and allows overriding it', () => {
       expect(loadConfig({}).GEMINI_MODEL).toBe('gemini-3.6-flash');
       expect(loadConfig({ GEMINI_MODEL: 'gemini-2.5-flash' }).GEMINI_MODEL).toBe('gemini-2.5-flash');
+    });
+
+    it('defaults GEMINI_EMBEDDING_MODEL and allows overriding it', () => {
+      expect(loadConfig({}).GEMINI_EMBEDDING_MODEL).toBe('gemini-embedding-001');
+      expect(loadConfig({ GEMINI_EMBEDDING_MODEL: 'gemini-embedding-2' }).GEMINI_EMBEDDING_MODEL).toBe('gemini-embedding-2');
+    });
+
+    it('defaults KNOWLEDGE_SEMANTIC_SEARCH_ENABLED to true, and only "false" turns it off', () => {
+      expect(loadConfig({}).KNOWLEDGE_SEMANTIC_SEARCH_ENABLED).toBe(true);
+      expect(loadConfig({ KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: 'false' }).KNOWLEDGE_SEMANTIC_SEARCH_ENABLED).toBe(false);
+      expect(loadConfig({ KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: 'true' }).KNOWLEDGE_SEMANTIC_SEARCH_ENABLED).toBe(true);
+      expect(loadConfig({ KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: 'anything-else' }).KNOWLEDGE_SEMANTIC_SEARCH_ENABLED).toBe(true);
     });
   });
 

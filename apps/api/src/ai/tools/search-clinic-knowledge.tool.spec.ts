@@ -166,4 +166,49 @@ describe('createSearchClinicKnowledgeTool', () => {
 
     expect(search).toHaveBeenCalledTimes(1);
   });
+
+  // Task 7-8 (Adeeba multilingual retrieval)
+  describe('queryTranslation (cross-lingual retrieval hedge)', () => {
+    it('10. an optional queryTranslation is passed through to the knowledge service', async () => {
+      const search = vi.fn().mockResolvedValue({ found: false, results: [] });
+      const tool = createSearchClinicKnowledgeTool({ search });
+
+      await tool.handler(tool.inputSchema.parse({ query: 'clinic kab khulta hai', queryTranslation: 'when does the clinic open' }), fakeContext);
+
+      expect(search).toHaveBeenCalledWith({
+        clinicId: CLINIC_ID_FROM_TRUSTED_CONTEXT,
+        query: 'clinic kab khulta hai',
+        queryTranslation: 'when does the clinic open',
+      });
+    });
+
+    it('11. queryTranslation is genuinely optional — omitting it still validates and searches', async () => {
+      const search = vi.fn().mockResolvedValue({ found: false, results: [] });
+      const tool = createSearchClinicKnowledgeTool({ search });
+
+      const parsed = tool.inputSchema.safeParse({ query: 'hours' });
+      expect(parsed.success).toBe(true);
+
+      await tool.handler({ query: 'hours' }, fakeContext);
+      expect(search).toHaveBeenCalledWith({ clinicId: CLINIC_ID_FROM_TRUSTED_CONTEXT, query: 'hours', queryTranslation: undefined });
+    });
+
+    it('12. an overly long queryTranslation is rejected by the schema', () => {
+      const parsed = createSearchClinicKnowledgeTool({ search: vi.fn() }).inputSchema.safeParse({ query: 'hours', queryTranslation: 'a'.repeat(201) });
+      expect(parsed.success).toBe(false);
+    });
+  });
+
+  // Task 7-8's deterministic escalation gate
+  describe('grounding.effect', () => {
+    it("13. found:true 'closes' the gate", () => {
+      const tool = createSearchClinicKnowledgeTool({ search: vi.fn() });
+      expect(tool.grounding?.effect?.({ success: true, found: true, results: [] })).toBe('closes');
+    });
+
+    it("14. found:false 'opens' the gate", () => {
+      const tool = createSearchClinicKnowledgeTool({ search: vi.fn() });
+      expect(tool.grounding?.effect?.({ success: true, found: false, results: [] })).toBe('opens');
+    });
+  });
 });

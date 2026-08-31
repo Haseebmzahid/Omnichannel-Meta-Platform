@@ -71,6 +71,17 @@ export const envSchema = z
     // key (see docs/ai/gemini-model-selection.md's documented rollback
     // option). Revert once 3.7-flash capacity recovers.
     GEMINI_MODEL: z.string().min(1).default('gemini-3.6-flash'),
+    // Adeeba multilingual knowledge retrieval (Task 7-8). gemini-embedding-001
+    // is the current GA Gemini text-embedding model — 100+ languages
+    // including Urdu, used here for cross-lingual clinic-knowledge search.
+    // Uses the same GEMINI_API_KEY as chat; no separate credential.
+    GEMINI_EMBEDDING_MODEL: z.string().min(1).default('gemini-embedding-001'),
+    // Instant kill-switch: falls back to the pre-existing pure-keyword
+    // search with no redeploy if hybrid scoring misbehaves in production.
+    KNOWLEDGE_SEMANTIC_SEARCH_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => v !== 'false'),
     // WhatsApp Cloud API inbound adapter. Optional here so the app boots,
     // and existing tests run, without real Meta credentials in
     // development/test — enforced as required only in production, below.

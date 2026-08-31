@@ -6,6 +6,7 @@ import { ChannelOutboundDispatcher } from '../channels/channel-outbound-dispatch
 import { config } from '../config';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { ClinicKnowledgeService } from '../knowledge/knowledge.service';
+import { ConversationService } from '../messaging/conversation.service';
 import { MessagingModule } from '../messaging/messaging.module';
 import { AiContextService } from './ai-context.service';
 import { AiOrchestratorService } from './ai-orchestrator.service';
@@ -14,6 +15,7 @@ import { InboundAiService } from './inbound-ai.service';
 import { GeminiAIProvider } from './providers/gemini.provider';
 import { ToolRegistry } from './tool.types';
 import { createCheckAvailabilityTool } from './tools/check-availability.tool';
+import { createEscalateToHumanTool } from './tools/escalate-to-human.tool';
 import { createSearchClinicKnowledgeTool } from './tools/search-clinic-knowledge.tool';
 import { createSendMessageTool } from './tools/send-message.tool';
 
@@ -100,14 +102,22 @@ import { createSendMessageTool } from './tools/send-message.tool';
         appointmentService: AppointmentService,
         dispatcher: ChannelOutboundDispatcher,
         knowledgeService: ClinicKnowledgeService,
+        conversationService: ConversationService,
       ) => {
         const registry = new ToolRegistry();
         registry.register(createCheckAvailabilityTool(appointmentService));
         registry.register(createSendMessageTool(dispatcher));
         registry.register(createSearchClinicKnowledgeTool(knowledgeService));
+        // Task 7-8 — registered after search_clinic_knowledge/send_message
+        // since it's the redirect target send_message's grounding metadata
+        // names by string; registration order itself has no functional
+        // effect (ToolRegistry looks tools up by name at dispatch time,
+        // not by registration order), this just keeps the escalation tool
+        // textually grouped with the mechanism it exists for.
+        registry.register(createEscalateToHumanTool(dispatcher, conversationService));
         return registry;
       },
-      inject: [AppointmentService, ChannelOutboundDispatcher, ClinicKnowledgeService],
+      inject: [AppointmentService, ChannelOutboundDispatcher, ClinicKnowledgeService, ConversationService],
     },
     {
       provide: AI_PROVIDER,

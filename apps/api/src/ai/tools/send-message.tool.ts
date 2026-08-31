@@ -82,7 +82,10 @@ export function createSendMessageTool(
     description:
       'Sends a text reply into the current patient conversation. The backend determines the conversation, ' +
       'the channel (WhatsApp, Instagram, ...), and the recipient — this tool never accepts a conversation id, ' +
-      'channel, phone number, Instagram user id, or any other recipient/account identifier.',
+      'channel, phone number, Instagram user id, or any other recipient/account identifier. If a clinic-fact ' +
+      'question is still unresolved (search_clinic_knowledge returned found:false and you have not called ' +
+      'escalate_to_human), this call will be automatically redirected to escalate_to_human instead of sending — ' +
+      'call escalate_to_human yourself, with a proper patient-facing message, rather than relying on that.',
     inputSchema,
     handler: async (input, context): Promise<SendMessageToolOutput> => {
       const result = await dispatcher.sendText({
@@ -107,7 +110,46 @@ export function createSendMessageTool(
         failureReason: result.failureReason,
       };
     },
+    // Task 7-8's deterministic escalation gate. While a clinic-fact
+    // question is unresolved (grounding.gapOpen — see
+    // search-clinic-knowledge.tool.ts's own 'opens'/'closes' effect), this
+    // tool's real handler never runs: ToolRegistry.dispatch() redirects to
+    // escalate_to_human with a fixed, non-model-authored fallback message
+    // instead of letting an ungrounded guess reach the patient. The
+    // fallback text is picked from `originalInput.text` (the very text
+    // being blocked) purely for a language-script signal — its content is
+    // never trusted or forwarded, only its script.
+    grounding: {
+      blockedByOpenGap: {
+        redirectToTool: 'escalate_to_human',
+        buildFallbackInput: (originalInput) => ({
+          reason: 'Unresolved clinic-fact question — automatic safeguard (model attempted to reply without a grounded source).',
+          patientFacingMessage: pickAutoEscalationMessage(originalInput),
+        }),
+      },
+    },
   };
+}
+
+// A small, fixed set of acknowledgement templates for the AUTOMATIC
+// safeguard redirect only — not the general localization mechanism
+// (escalate_to_human's own patientFacingMessage is normally model-authored
+// in the patient's own language; this only covers the rare case where the
+// gate substitutes escalation for a blocked bare reply, where there is no
+// fresh model turn to author one). Script-detected from the blocked text
+// itself: Urdu-Unicode-range presence selects the Urdu-script template;
+// otherwise a combined English/Roman-Urdu template, since those two are
+// not reliably distinguishable by script alone. A patient chatting in a
+// third language sees this English/Roman-Urdu fallback in this rare
+// synthetic-override path only — accepted, disclosed limitation.
+const URDU_SCRIPT_PATTERN = /[؀-ۿ]/;
+
+function pickAutoEscalationMessage(originalInput: unknown): string {
+  const blockedText = typeof originalInput === 'object' && originalInput !== null && 'text' in originalInput ? String((originalInput as { text: unknown }).text) : '';
+
+  return URDU_SCRIPT_PATTERN.test(blockedText)
+    ? 'اس سوال کے لیے میں آپ کو ہمارے کلینک اسٹاف سے جوڑ رہی ہوں — وہ جلد آپ سے رابطہ کریں گے۔'
+    : "Let me connect you with our clinic staff for this — woh jald aap se rabta karenge. / They'll follow up with you shortly.";
 }
 
 // Deterministic, content-derived key — not a per-invocation random one —

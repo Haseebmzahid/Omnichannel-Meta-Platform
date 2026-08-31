@@ -24,8 +24,15 @@ import type { ToolDefinition } from '../tool.types';
 
 const MAX_QUERY_LENGTH = 200;
 
+// Task 7-8 (Adeeba multilingual retrieval) — queryTranslation is Gemini's
+// own best-effort plain-English or Urdu-script gloss of the patient's
+// question, used alongside the verbatim query for semantic embedding
+// (knowledge.service.ts's embedQueries()). It is a cross-lingual retrieval
+// hedge specifically for Roman Urdu, not a translation the patient ever
+// sees — never returned, never logged as patient-facing text.
 const inputSchema = z.object({
   query: z.string().trim().min(1).max(MAX_QUERY_LENGTH),
+  queryTranslation: z.string().trim().max(MAX_QUERY_LENGTH).optional(),
 });
 
 export type SearchClinicKnowledgeToolInput = z.infer<typeof inputSchema>;
@@ -49,14 +56,29 @@ export function createSearchClinicKnowledgeTool(
       "Searches this clinic's own knowledge base for real, staff-authored facts — clinic info, hours, location, " +
       'services, fees, doctor information, policies, and FAQs. Returns found: false when nothing matches; treat ' +
       'that as "this information is not available", never as licence to guess. This tool never returns real-time ' +
-      'appointment availability — use check_availability for that.',
+      "appointment availability — use check_availability for that. Retrieval works across English, Urdu script, " +
+      'and Roman Urdu; if the patient wrote in Roman Urdu or mixed script, also pass queryTranslation with your ' +
+      'own best plain-English or Urdu-script rendering of their question — this improves matching, it is never ' +
+      'shown to the patient.',
     inputSchema,
     handler: async (input, context): Promise<SearchClinicKnowledgeToolOutput> => {
       // Trusted backend context only — never a clinicId the model could
       // supply (there is no such field in inputSchema to supply one
       // through in the first place).
-      const result = await knowledgeService.search({ clinicId: context.clinicId, query: input.query });
+      const result = await knowledgeService.search({
+        clinicId: context.clinicId,
+        query: input.query,
+        queryTranslation: input.queryTranslation,
+      });
       return { success: true, found: result.found, results: result.results };
+    },
+    // Task 7-8's deterministic escalation gate: an unresolved clinic-fact
+    // question ('opens') blocks a bare send_message until it's resolved —
+    // either a later search in the same turn actually finds something
+    // ('closes') or the model explicitly escalates. See tool.types.ts's
+    // ToolGroundingMetadata and send-message.tool.ts's blockedByOpenGap.
+    grounding: {
+      effect: (output) => (output.found ? 'closes' : 'opens'),
     },
   };
 }

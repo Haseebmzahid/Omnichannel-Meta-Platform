@@ -6,7 +6,9 @@ import { AiOrchestratorService } from './ai-orchestrator.service';
 import type { AIProvider, AIProviderRequest, AIProviderResponse } from './ai-provider.interface';
 import { ToolRegistry } from './tool.types';
 import { createCheckAvailabilityTool } from './tools/check-availability.tool';
+import { createEscalateToHumanTool } from './tools/escalate-to-human.tool';
 import { createSearchClinicKnowledgeTool } from './tools/search-clinic-knowledge.tool';
+import { createSendMessageTool } from './tools/send-message.tool';
 
 // A fake AIProvider: pure in-memory, scripted responses, no network I/O of
 // any kind — this is what "AI provider abstraction can be mocked without
@@ -125,5 +127,94 @@ describe('AiOrchestratorService', () => {
     // require any concrete transport/network dependency to implement.
     const response = await provider.generate({ messages: [], tools: [] });
     expect(response).toEqual({ text: 'ok' });
+  });
+});
+
+// Task 7-8 — end-to-end proof of the deterministic escalation-enforcement
+// requirement ("a clinic-fact question cannot simply receive a
+// model-generated guess"), using the REAL search_clinic_knowledge/
+// send_message/escalate_to_human tool files wired together exactly as
+// ai.module.ts wires them — not the generic fixture tools tool.types.spec.ts
+// uses to test the ToolRegistry mechanism in isolation.
+describe('AiOrchestratorService — deterministic escalation enforcement (Task 7-8)', () => {
+  function fakeDispatcherResult() {
+    return { channel: 'WHATSAPP', messageId: 'm1', externalId: 'wamid.1', deliveryStatus: 'SENT', delivered: true };
+  }
+
+  it('a non-compliant model that tries to send_message a guess after found:false is redirected — the guess never reaches the patient', async () => {
+    const search = vi.fn().mockResolvedValue({ found: false, results: [] });
+    const sendText = vi.fn().mockResolvedValue(fakeDispatcherResult());
+    const escalateToHuman = vi.fn().mockResolvedValue(true);
+
+    const registry = new ToolRegistry();
+    registry.register(createSearchClinicKnowledgeTool({ search }));
+    registry.register(createSendMessageTool({ sendText }));
+    registry.register(createEscalateToHumanTool({ sendText }, { escalateToHuman }));
+
+    const provider = new FakeAIProvider([
+      { toolCalls: [{ id: 'call-1', name: 'search_clinic_knowledge', arguments: { query: 'do you accept insurance' } }] },
+      // Non-compliant: the model tries to answer directly with a
+      // fabricated claim instead of escalating, despite found:false.
+      { toolCalls: [{ id: 'call-2', name: 'send_message', arguments: { text: 'Yes, we accept all insurance plans.' } }] },
+      { text: 'done' },
+    ]);
+    const orchestrator = new AiOrchestratorService(provider, registry);
+
+    await orchestrator.handle({ context: fakeContext, message: 'do you accept insurance?' });
+
+    // The fabricated guess never reached the dispatcher as sent text —
+    // only escalate_to_human's own fallback message did, and exactly once.
+    expect(sendText).toHaveBeenCalledTimes(1);
+    expect(sendText).not.toHaveBeenCalledWith(expect.objectContaining({ text: 'Yes, we accept all insurance plans.' }));
+    expect(escalateToHuman).toHaveBeenCalledTimes(1);
+  });
+
+  it('a compliant model that calls escalate_to_human itself is never redirected — nothing to redirect', async () => {
+    const search = vi.fn().mockResolvedValue({ found: false, results: [] });
+    const sendText = vi.fn().mockResolvedValue(fakeDispatcherResult());
+    const escalateToHuman = vi.fn().mockResolvedValue(true);
+
+    const registry = new ToolRegistry();
+    registry.register(createSearchClinicKnowledgeTool({ search }));
+    registry.register(createSendMessageTool({ sendText }));
+    registry.register(createEscalateToHumanTool({ sendText }, { escalateToHuman }));
+
+    const provider = new FakeAIProvider([
+      { toolCalls: [{ id: 'call-1', name: 'search_clinic_knowledge', arguments: { query: 'do you accept insurance' } }] },
+      {
+        toolCalls: [
+          { id: 'call-2', name: 'escalate_to_human', arguments: { reason: 'insurance question not in KB', patientFacingMessage: 'Connecting you with staff.' } },
+        ],
+      },
+      { text: 'done' },
+    ]);
+    const orchestrator = new AiOrchestratorService(provider, registry);
+
+    await orchestrator.handle({ context: fakeContext, message: 'do you accept insurance?' });
+
+    expect(sendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'Connecting you with staff.' }));
+    expect(escalateToHuman).toHaveBeenCalledTimes(1);
+  });
+
+  it('a normal, grounded reply after found:true is never gated — the ordinary path is unaffected', async () => {
+    const search = vi.fn().mockResolvedValue({ found: true, results: [{ category: 'HOURS', title: 'Hours', body: 'Mon-Sat 9-6.' }] });
+    const sendText = vi.fn().mockResolvedValue(fakeDispatcherResult());
+
+    const registry = new ToolRegistry();
+    registry.register(createSearchClinicKnowledgeTool({ search }));
+    registry.register(createSendMessageTool({ sendText }));
+    // escalate_to_human deliberately not registered — proves this path
+    // never needs it when the gate never opens in the first place.
+
+    const provider = new FakeAIProvider([
+      { toolCalls: [{ id: 'call-1', name: 'search_clinic_knowledge', arguments: { query: 'hours' } }] },
+      { toolCalls: [{ id: 'call-2', name: 'send_message', arguments: { text: 'We are open Monday to Saturday, 9am to 6pm.' } }] },
+      { text: 'done' },
+    ]);
+    const orchestrator = new AiOrchestratorService(provider, registry);
+
+    await orchestrator.handle({ context: fakeContext, message: 'what are your hours?' });
+
+    expect(sendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'We are open Monday to Saturday, 9am to 6pm.' }));
   });
 });

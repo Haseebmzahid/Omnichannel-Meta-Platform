@@ -13,6 +13,8 @@
     "smoke:whatsapp": "tsx scripts/whatsapp-send-smoke-test.ts",
     "smoke:media-storage": "tsx scripts/media-storage-smoke-test.ts",
     "seed:knowledge": "tsx scripts/seed-clinic-knowledge.ts",
+    "backfill:knowledge-embeddings": "tsx scripts/backfill-knowledge-embeddings.ts",
+    "check:knowledge-retrieval-matrix": "tsx scripts/knowledge-retrieval-matrix-check.ts",
     "seed:demo": "tsx scripts/seed-demo-data.ts",
     "cleanup:demo": "tsx scripts/cleanup-demo-data.ts",
     "db:generate": "prisma generate",

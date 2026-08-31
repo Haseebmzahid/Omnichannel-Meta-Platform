@@ -656,6 +656,18 @@ model KnowledgeDocument {
   // one meaningful today.
   updatedBy String?
 
+  // Adeeba multilingual retrieval (Task 7-8) — semantic embedding of
+  // `title + body`, computed via gemini-embedding-001 (RETRIEVAL_DOCUMENT
+  // task type). Plain Postgres double precision[], no pgvector: clinic
+  // corpora are realistically tens of documents, so an in-application
+  // cosine-similarity scan over the same already clinic-scoped rows
+  // search() already fetches needs no vector index. Defaults to `[]`
+  // (never null) so an un-backfilled or embed-failed row degrades to
+  // keyword-only scoring rather than needing a null check everywhere.
+  embedding          Float[]   @default([])
+  embeddingModel     String?
+  embeddingUpdatedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
