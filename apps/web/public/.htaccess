@@ -1,0 +1,15 @@
+# SPA fallback for client-side routing (React Router / BrowserRouter) on
+# Hostinger's Apache-based static hosting. Requests for a real file or
+# directory (the built JS/CSS/font/image assets under /assets, this file
+# itself, etc.) are served as-is; anything else — /login, /inbox,
+# /customers, /staff, /knowledge, and any future client-side route — falls
+# back to index.html so React Router can handle it client-side, instead of
+# Hostinger's own 404 page.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>
