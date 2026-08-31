@@ -1,23 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { ApiError, GoogleGenAI } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import { logger } from '../../logging/logger';
 import { AIProviderError, type AIProvider, type AIProviderRequest, type AIProviderResponse } from '../ai-provider.interface';
 import { fromGeminiResponse, toFunctionDeclaration, toGeminiContents } from './gemini-mapping';
 import { CLINIC_SYSTEM_INSTRUCTION } from './gemini-system-instruction';
-
-// Part 10 follow-up (production diagnostic) — the safe subset of a failed
-// Gemini call's shape that's useful for the ADMIN-only /health/gemini
-// endpoint to see. Deliberately never carries a stack trace, the API key,
-// headers, or the request payload — see sanitizeError() below, the only
-// place this is constructed.
-export interface SanitizedGeminiError {
-  name?: string;
-  message?: string;
-  /** HTTP status from the Gemini API, when the failure was an ApiError (e.g. 404 unknown model, 403 permission denied, 429 quota). */
-  status?: number;
-  /** Sanitized network-level cause (e.g. a fetch failure's `.cause.code`/`.message` — DNS, TLS, connection refused/timeout), when the failure never reached Gemini's API. */
-  networkCause?: { code?: string; message?: string };
-}
 
 // Task 4C-6 — the first real AIProvider implementation. Gemini-specific
 // code (the @google/genai SDK, its request/response shapes, its
@@ -65,17 +51,12 @@ export class GeminiAIProvider implements AIProvider {
       return fromGeminiResponse(response);
     } catch (err) {
       if (err instanceof AIProviderError) throw err; // already safe (e.g. the malformed-response case above)
-      const sanitized = this.sanitizeError(err);
-      logger.error({ err: sanitized }, 'Gemini request failed');
-      // The thrown message is deliberately generic and identical for every
-      // failure mode (invalid key, network error, rate limit, SDK
-      // exception, ...) — Part 10 asks for safe handling of all of these,
-      // explicitly not a "sophisticated retry system" or differentiated
-      // user-facing messaging. `sanitized` rides along on `.cause` purely
-      // for the ADMIN-only /health/gemini diagnostic (health.controller.ts)
-      // to unwrap — every other caller (the orchestrator, WhatsApp, ...)
-      // only ever sees/uses `.message`, unchanged.
-      throw new AIProviderError('The AI provider is currently unavailable. Please try again.', { cause: sanitized });
+      logger.error({ err: this.sanitizeError(err) }, 'Gemini request failed');
+      // Deliberately generic and identical for every failure mode (invalid
+      // key, network error, rate limit, SDK exception, ...) — Part 10 asks
+      // for safe handling of all of these, explicitly not a "sophisticated
+      // retry system" or differentiated user-facing messaging.
+      throw new AIProviderError('The AI provider is currently unavailable. Please try again.');
     }
   }
 
@@ -96,33 +77,13 @@ export class GeminiAIProvider implements AIProvider {
     return this.client;
   }
 
-  // Part 10: never log (or, via AIProviderError.cause, ever surface past
-  // this provider) the API key, raw SDK internals, or a stack trace. Only a
-  // safe name/message/status survive, with the configured key defensively
-  // redacted from every string even though it should never appear there in
-  // practice. `err.message` here is never a raw request payload — for the
-  // SDK's own ApiError it's Google's JSON error body (status/code/message),
-  // and for a generic Error it's whatever message the SDK/fetch layer set,
-  // neither of which include the caller's request.
-  private sanitizeError(err: unknown): SanitizedGeminiError {
+  // Part 10: never log the API key, raw SDK internals, or a stack trace.
+  // Only a safe name/message survive into the log, with the configured key
+  // defensively redacted from the message even though it should never
+  // appear there in practice.
+  private sanitizeError(err: unknown): { name?: string; message?: string } {
     if (!(err instanceof Error)) return { message: 'Unknown error' };
-
-    const redact = (message: string): string =>
-      this.apiKey ? message.split(this.apiKey).join('[REDACTED]') : message;
-
-    const sanitized: SanitizedGeminiError = { name: err.name, message: redact(err.message) };
-
-    if (err instanceof ApiError) {
-      sanitized.status = err.status;
-    } else if (err.cause instanceof Error) {
-      // A fetch-level failure (DNS, TLS, connection refused/timeout, egress
-      // blocked) never reaches Gemini's API, so it's a plain Error/TypeError
-      // rather than an ApiError — Node's undici puts the actual reason on
-      // `.cause` (e.g. `.cause.code` = 'ENOTFOUND'/'ECONNREFUSED').
-      const cause = err.cause as Error & { code?: string };
-      sanitized.networkCause = { code: cause.code, message: redact(cause.message) };
-    }
-
-    return sanitized;
+    const message = this.apiKey ? err.message.split(this.apiKey).join('[REDACTED]') : err.message;
+    return { name: err.name, message };
   }
 }

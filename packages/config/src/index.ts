@@ -65,7 +65,12 @@ export const envSchema = z
     // apps/api/src/ai/providers/gemini.provider.ts) — only an actual
     // generate() call needs a configured key.
     GEMINI_API_KEY: z.string().min(1).optional(),
-    GEMINI_MODEL: z.string().min(1).default('gemini-3.7-flash'),
+    // Temporary rollback: gemini-3.7-flash returns HTTP 503 UNAVAILABLE in
+    // production ("experiencing high demand"); gemini-3.6-flash is a
+    // same-tier, one-generation-back model confirmed working with the same
+    // key (see docs/ai/gemini-model-selection.md's documented rollback
+    // option). Revert once 3.7-flash capacity recovers.
+    GEMINI_MODEL: z.string().min(1).default('gemini-3.6-flash'),
     // WhatsApp Cloud API inbound adapter. Optional here so the app boots,
     // and existing tests run, without real Meta credentials in
     // development/test — enforced as required only in production, below.
