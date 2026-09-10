@@ -106,6 +106,41 @@ describe('GeminiAIProvider', () => {
     });
   });
 
+  it('replays signed functionCall part with thoughtSignature across a tool round trip', async () => {
+    const generateContent = mockGenerateContent(() => ({ text: 'Here are the hours' }));
+    const provider = new GeminiAIProvider('a-key', 'gemini-3.6-flash');
+
+    const signedParts = [
+      {
+        functionCall: { id: 'call-kb-1', name: 'search_clinic_knowledge', args: { query: 'hours' } },
+        thoughtSignature: 'encrypted-sig-token-789',
+      },
+    ];
+
+    await provider.generate({
+      messages: [
+        { role: 'user', content: 'what are your hours?' },
+        {
+          role: 'tool',
+          toolCallId: 'call-kb-1',
+          toolName: 'search_clinic_knowledge',
+          toolArguments: { query: 'hours' },
+          thoughtSignature: 'encrypted-sig-token-789',
+          rawModelParts: signedParts,
+          content: JSON.stringify({ success: true, output: { found: true } }),
+        },
+      ],
+      tools: [],
+    });
+
+    const call = generateContent.mock.calls[0]?.[0] as { contents: unknown[] };
+    expect(call.contents).toHaveLength(3);
+    expect(call.contents[1]).toEqual({
+      role: 'model',
+      parts: signedParts,
+    });
+  });
+
   it('7+8. sanitizes provider errors and never logs the API key', async () => {
     const apiKey = 'fake-secret-key-abc123';
     mockGenerateContent(() => {

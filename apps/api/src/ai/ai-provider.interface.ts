@@ -17,6 +17,10 @@ export interface AIMessage {
   toolName?: string;
   /** Preserves the actual arguments supplied by the model in the preceding call. */
   toolArguments?: Record<string, unknown>;
+  /** Preserves provider-specific metadata (e.g. Gemini thoughtSignature) across tool turns. */
+  thoughtSignature?: string;
+  /** Preserves the provider's original model turn parts (including thought blocks and signed function calls). */
+  rawModelParts?: unknown[];
 }
 
 // A provider-agnostic description of a callable tool, derived from a
@@ -37,6 +41,10 @@ export interface AIToolCall {
   id: string;
   name: string;
   arguments: unknown;
+  /** Preserves provider-specific metadata (e.g. Gemini thoughtSignature) across tool turns. */
+  thoughtSignature?: string;
+  /** Preserves the provider's original model turn parts (including thought blocks and signed function calls). */
+  rawModelParts?: unknown[];
 }
 
 export interface AIProviderRequest {

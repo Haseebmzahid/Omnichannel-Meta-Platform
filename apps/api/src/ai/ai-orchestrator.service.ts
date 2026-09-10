@@ -75,6 +75,8 @@ export class AiOrchestratorService {
             typeof call.arguments === 'object' && call.arguments !== null
               ? (call.arguments as Record<string, unknown>)
               : {},
+          thoughtSignature: call.thoughtSignature,
+          rawModelParts: call.rawModelParts,
           content: JSON.stringify(result),
         });
       }

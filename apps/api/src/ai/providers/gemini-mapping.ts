@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createPartFromFunctionResponse, type Content, type FunctionDeclaration } from '@google/genai';
+import { createPartFromFunctionResponse, type Content, type FunctionDeclaration, type Part } from '@google/genai';
 import { AIProviderError, type AIMessage, type AIProviderResponse, type AIToolCall } from '../ai-provider.interface';
 import type { AIToolDescriptor } from '../ai-provider.interface';
 
@@ -48,7 +48,46 @@ export function toGeminiContents(messages: AIMessage[]): Content[] {
       const name = message.toolName ?? '';
       const id = message.toolCallId ?? '';
       const args = message.toolArguments ?? {};
-      appendContent(contents, { role: 'model', parts: [{ functionCall: { id, name, args } }] });
+
+      // In Gemini thinking models, functionCall parts carry a cryptographic thoughtSignature
+      // that must be re-sent in the preceding model turn. If the model's raw parts were
+      // preserved from the previous turn, replay them; otherwise reconstruct from name/id/args.
+      const modelParts: Part[] =
+        Array.isArray(message.rawModelParts) && message.rawModelParts.length > 0
+          ? (message.rawModelParts as Part[])
+          : [
+              {
+                functionCall: { id, name, args },
+                ...(message.thoughtSignature ? { thoughtSignature: message.thoughtSignature } : {}),
+              },
+            ];
+
+      // If the preceding turn in contents is already a user turn with functionResponse(s),
+      // this message is part of a parallel/multiple tool-call turn.
+      const lastContent = contents.at(-1);
+      const isParallelToolTurn =
+        lastContent?.role === 'user' &&
+        Boolean(lastContent.parts?.some((p) => 'functionResponse' in p));
+
+      if (isParallelToolTurn) {
+        const precedingModelTurn = contents.at(-2);
+        if (precedingModelTurn && precedingModelTurn.role === 'model') {
+          // If rawModelParts was used, precedingModelTurn already contains the full set
+          // of model parts (including thoughts and all signed functionCalls).
+          // If fallback reconstruction is used, append this functionCall to the existing model turn.
+          if (!message.rawModelParts || message.rawModelParts.length === 0) {
+            const alreadyPresent = precedingModelTurn.parts?.some(
+              (p) => p.functionCall && (id ? p.functionCall.id === id : p.functionCall.name === name),
+            );
+            if (!alreadyPresent) {
+              precedingModelTurn.parts = [...(precedingModelTurn.parts ?? []), ...modelParts];
+            }
+          }
+        }
+      } else {
+        appendContent(contents, { role: 'model', parts: modelParts });
+      }
+
       appendContent(contents, { role: 'user', parts: [createPartFromFunctionResponse(id, name, parseToolResult(message.content))] });
       continue;
     }
@@ -95,6 +134,12 @@ function parseToolResult(content: string): Record<string, unknown> {
 export interface MinimalGenerateContentResponse {
   text?: string;
   functionCalls?: Array<{ id?: string; name?: string; args?: Record<string, unknown> }>;
+  candidates?: Array<{
+    content?: {
+      role?: string;
+      parts?: Part[];
+    };
+  }>;
 }
 
 // Part 10 — "malformed provider response" / "tool-call parsing failure":
@@ -104,7 +149,24 @@ export interface MinimalGenerateContentResponse {
 export function fromGeminiResponse(response: MinimalGenerateContentResponse): AIProviderResponse {
   let toolCalls: AIToolCall[] | undefined;
 
-  if (response.functionCalls && response.functionCalls.length > 0) {
+  const candidateParts = response.candidates?.[0]?.content?.parts;
+  const functionCallParts = candidateParts?.filter((part) => part.functionCall);
+
+  if (functionCallParts && functionCallParts.length > 0) {
+    toolCalls = functionCallParts.map((part): AIToolCall => {
+      const call = part.functionCall!;
+      if (!call.name) {
+        throw new AIProviderError('Gemini returned a tool call with no function name.');
+      }
+      return {
+        id: call.id ?? randomUUID(),
+        name: call.name,
+        arguments: call.args ?? {},
+        thoughtSignature: part.thoughtSignature,
+        rawModelParts: candidateParts,
+      };
+    });
+  } else if (response.functionCalls && response.functionCalls.length > 0) {
     toolCalls = response.functionCalls.map((call): AIToolCall => {
       if (!call.name) {
         throw new AIProviderError('Gemini returned a tool call with no function name.');

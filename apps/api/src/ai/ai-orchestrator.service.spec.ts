@@ -219,4 +219,46 @@ describe('AiOrchestratorService — deterministic escalation enforcement (Task 7
 
     expect(sendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'We are open Monday to Saturday, 9am to 6pm.' }));
   });
+
+  it('preserves thoughtSignature and rawModelParts on tool message during tool round trip', async () => {
+    const search = vi.fn().mockResolvedValue({ found: true, results: [{ category: 'HOURS', title: 'Hours', body: '9am - 5pm' }] });
+    const registry = new ToolRegistry();
+    registry.register(createSearchClinicKnowledgeTool({ search }));
+
+    const rawParts = [
+      { text: 'Thinking about clinic hours...' },
+      {
+        functionCall: {
+          name: 'search_clinic_knowledge',
+          args: { query: 'hours' },
+        },
+        thoughtSignature: 'jwt.signature.token',
+      },
+    ];
+
+    const provider = new FakeAIProvider([
+      {
+        toolCalls: [
+          {
+            id: 'call-1',
+            name: 'search_clinic_knowledge',
+            arguments: { query: 'hours' },
+            thoughtSignature: 'jwt.signature.token',
+            rawModelParts: rawParts,
+          },
+        ],
+      },
+      { text: 'We are open 9am to 5pm.' },
+    ]);
+    const orchestrator = new AiOrchestratorService(provider, registry);
+
+    await orchestrator.handle({ context: fakeContext, message: 'hours' });
+
+    expect(provider.calls).toHaveLength(2);
+    const secondTurnMessages = provider.calls[1]?.messages ?? [];
+    const toolMsg = secondTurnMessages.find((m) => m.role === 'tool');
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg?.thoughtSignature).toBe('jwt.signature.token');
+    expect(toolMsg?.rawModelParts).toBe(rawParts);
+  });
 });

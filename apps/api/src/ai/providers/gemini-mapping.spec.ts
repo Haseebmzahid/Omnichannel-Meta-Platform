@@ -126,6 +126,157 @@ describe('toGeminiContents', () => {
     });
   });
 
+  it('reconstructs model functionCall turn with preserved thoughtSignature', () => {
+    const messages: AIMessage[] = [
+      { role: 'user', content: 'what are your hours?' },
+      {
+        role: 'tool',
+        toolCallId: 'call-search-1',
+        toolName: 'search_clinic_knowledge',
+        toolArguments: { query: 'hours' },
+        thoughtSignature: 'sig-base64-token-xyz',
+        content: JSON.stringify({ success: true, output: { found: true } }),
+      },
+    ];
+
+    const contents = toGeminiContents(messages);
+
+    expect(contents).toHaveLength(3);
+    expect(contents[1]).toEqual({
+      role: 'model',
+      parts: [
+        {
+          functionCall: { id: 'call-search-1', name: 'search_clinic_knowledge', args: { query: 'hours' } },
+          thoughtSignature: 'sig-base64-token-xyz',
+        },
+      ],
+    });
+  });
+
+  it('replays preserved rawModelParts from previous turn including thought blocks and signed function calls', () => {
+    const signedParts = [
+      { thought: true, text: 'Need to look up clinic hours.', thoughtSignature: 'sig-thought-1' },
+      {
+        functionCall: { id: 'call-search-1', name: 'search_clinic_knowledge', args: { query: 'hours' } },
+        thoughtSignature: 'sig-fc-2',
+      },
+    ];
+
+    const messages: AIMessage[] = [
+      { role: 'user', content: 'what are your hours?' },
+      {
+        role: 'tool',
+        toolCallId: 'call-search-1',
+        toolName: 'search_clinic_knowledge',
+        toolArguments: { query: 'hours' },
+        rawModelParts: signedParts,
+        content: JSON.stringify({ success: true, output: { found: true } }),
+      },
+    ];
+
+    const contents = toGeminiContents(messages);
+
+    expect(contents).toHaveLength(3);
+    expect(contents[1]).toEqual({
+      role: 'model',
+      parts: signedParts,
+    });
+    expect(contents[2]?.parts?.[0]?.functionResponse).toMatchObject({
+      id: 'call-search-1',
+      name: 'search_clinic_knowledge',
+    });
+  });
+
+  it('handles parallel/multiple tool calls with rawModelParts without duplicating model turns', () => {
+    const rawParts = [
+      { thought: true, text: 'Need hours and address' },
+      {
+        functionCall: { name: 'search_clinic_knowledge', args: { query: 'hours' } },
+        thoughtSignature: 'sig-1',
+      },
+      {
+        functionCall: { name: 'search_clinic_knowledge', args: { query: 'address' } },
+        thoughtSignature: 'sig-2',
+      },
+    ];
+
+    const messages: AIMessage[] = [
+      { role: 'user', content: 'what are your hours and address?' },
+      {
+        role: 'tool',
+        toolCallId: 'uuid-call-1',
+        toolName: 'search_clinic_knowledge',
+        toolArguments: { query: 'hours' },
+        rawModelParts: rawParts,
+        content: JSON.stringify({ found: true, answer: '9-5' }),
+      },
+      {
+        role: 'tool',
+        toolCallId: 'uuid-call-2',
+        toolName: 'search_clinic_knowledge',
+        toolArguments: { query: 'address' },
+        rawModelParts: rawParts,
+        content: JSON.stringify({ found: true, answer: 'Main Street' }),
+      },
+    ];
+
+    const contents = toGeminiContents(messages);
+
+    // Exactly 3 turns: user prompt, single model turn with rawParts, and combined user responses turn
+    expect(contents).toHaveLength(3);
+    expect(contents[0]?.role).toBe('user');
+    expect(contents[1]).toEqual({
+      role: 'model',
+      parts: rawParts,
+    });
+    expect(contents[2]?.role).toBe('user');
+    expect(contents[2]?.parts).toHaveLength(2);
+    expect(contents[2]?.parts?.[0]?.functionResponse?.name).toBe('search_clinic_knowledge');
+    expect(contents[2]?.parts?.[1]?.functionResponse?.name).toBe('search_clinic_knowledge');
+  });
+
+  it('combines parallel tool calls into single model and user turns in fallback mode', () => {
+    const messages: AIMessage[] = [
+      { role: 'user', content: 'check hours and availability' },
+      {
+        role: 'tool',
+        toolCallId: 'call-1',
+        toolName: 'search_clinic_knowledge',
+        toolArguments: { query: 'hours' },
+        thoughtSignature: 'sig-fallback-1',
+        content: JSON.stringify({ found: true }),
+      },
+      {
+        role: 'tool',
+        toolCallId: 'call-2',
+        toolName: 'check_availability',
+        toolArguments: { date: '2026-09-10' },
+        thoughtSignature: 'sig-fallback-2',
+        content: JSON.stringify({ slots: [] }),
+      },
+    ];
+
+    const contents = toGeminiContents(messages);
+
+    expect(contents).toHaveLength(3);
+    expect(contents[0]?.role).toBe('user');
+    expect(contents[1]?.role).toBe('model');
+    expect(contents[1]?.parts).toEqual([
+      {
+        functionCall: { id: 'call-1', name: 'search_clinic_knowledge', args: { query: 'hours' } },
+        thoughtSignature: 'sig-fallback-1',
+      },
+      {
+        functionCall: { id: 'call-2', name: 'check_availability', args: { date: '2026-09-10' } },
+        thoughtSignature: 'sig-fallback-2',
+      },
+    ]);
+    expect(contents[2]?.role).toBe('user');
+    expect(contents[2]?.parts).toHaveLength(2);
+    expect(contents[2]?.parts?.[0]?.functionResponse?.id).toBe('call-1');
+    expect(contents[2]?.parts?.[1]?.functionResponse?.id).toBe('call-2');
+  });
+
   it('falls back to a { result: content } wrapper when a tool message is not JSON', () => {
     const messages: AIMessage[] = [
       { role: 'tool', toolCallId: 'call-2', toolName: 'echo', content: 'not json' },
@@ -147,6 +298,37 @@ describe('fromGeminiResponse', () => {
     });
 
     expect(result.toolCalls).toEqual([{ id: 'call-1', name: 'check_availability', arguments: { doctorId: 'd1' } }]);
+  });
+
+  it('extracts thoughtSignature and rawModelParts from candidate content parts', () => {
+    const candidateParts = [
+      { thought: true, text: 'Thinking about clinic hours...', thoughtSignature: 'sig-thought-abc' },
+      {
+        functionCall: { id: 'call-kb-1', name: 'search_clinic_knowledge', args: { query: 'timings' } },
+        thoughtSignature: 'sig-call-def',
+      },
+    ];
+
+    const result = fromGeminiResponse({
+      candidates: [
+        {
+          content: {
+            role: 'model',
+            parts: candidateParts,
+          },
+        },
+      ],
+    });
+
+    expect(result.toolCalls).toEqual([
+      {
+        id: 'call-kb-1',
+        name: 'search_clinic_knowledge',
+        arguments: { query: 'timings' },
+        thoughtSignature: 'sig-call-def',
+        rawModelParts: candidateParts,
+      },
+    ]);
   });
 
   it('does not access response.text when functionCalls are present', () => {
