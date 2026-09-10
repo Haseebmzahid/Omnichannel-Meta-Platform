@@ -20,6 +20,12 @@ export interface BuildAIContextInput {
   clinicId: string;
   conversation: Conversation;
   historyLimit?: number;
+  /**
+   * The inbound message that triggered this AI turn is already persisted
+   * before context is assembled. The orchestrator appends it as the latest
+   * user turn, so it must not also be included in history.
+   */
+  excludeMessageId?: string;
 }
 
 @Injectable()
@@ -39,7 +45,7 @@ export class AiContextService {
       clinicId: input.clinicId,
       conversationId: input.conversation.id,
       patientId: input.conversation.patientId ?? undefined,
-      recentMessages: history.map(toAIContextMessage),
+      recentMessages: history.filter((message) => message.id !== input.excludeMessageId).map(toAIContextMessage),
       // Conversation.channelKey/mode are already the exact literal-union
       // shape AIContext.channel/mode expect (generated/prisma/enums.ts
       // types Prisma enums as string-literal unions, not nominal TS

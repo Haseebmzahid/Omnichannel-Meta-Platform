@@ -120,6 +120,20 @@ describe('AiContextService', () => {
     );
   });
 
+  it('excludes the just-persisted inbound message so the orchestrator adds it only once', async () => {
+    const triggeringMessage = fakeMessage({ id: 'new-inbound-message', text: 'is the doctor free today?' });
+    const priorMessage = fakeMessage({ id: 'prior-message', text: 'hello', direction: MessageDirection.OUTBOUND });
+    const { service } = buildService([priorMessage, triggeringMessage]);
+
+    const context = await service.buildContext({
+      clinicId: CLINIC_ID,
+      conversation: fakeConversation(),
+      excludeMessageId: triggeringMessage.id,
+    });
+
+    expect(context.recentMessages).toEqual([{ role: 'assistant', content: 'hello' }]);
+  });
+
   it('4. uses the trusted clinicId passed by the caller, not anything read off the conversation elsewhere', async () => {
     const { service, getRecentConversationMessages } = buildService([]);
     await service.buildContext({ clinicId: CLINIC_ID, conversation: fakeConversation({ clinicId: 'a-different-value' }) });

@@ -112,7 +112,11 @@ describe('InboundAiService', () => {
 
     const response = await service.processInboundMessage(result);
 
-    expect(buildContext).toHaveBeenCalledWith({ clinicId: CLINIC_ID, conversation: result.conversation });
+    expect(buildContext).toHaveBeenCalledWith({
+      clinicId: CLINIC_ID,
+      conversation: result.conversation,
+      excludeMessageId: result.message.id,
+    });
     expect(handle).toHaveBeenCalledWith({ context: fakeAIContext, message: result.message.text });
     expect(response).toEqual({ text: 'ok', toolCalls: [] });
   });

@@ -66,6 +66,7 @@ export class InboundAiService {
       const context = await this.aiContextService.buildContext({
         clinicId: result.conversation.clinicId,
         conversation: result.conversation,
+        excludeMessageId: result.message.id,
       });
 
       const response = await this.orchestrator.handle({ context, message: result.message.text });
