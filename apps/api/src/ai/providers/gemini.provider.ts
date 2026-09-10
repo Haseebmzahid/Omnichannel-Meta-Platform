@@ -1,9 +1,18 @@
 import { Injectable } from '@nestjs/common';
-import { GoogleGenAI } from '@google/genai';
+import { ApiError, GoogleGenAI } from '@google/genai';
 import { logger } from '../../logging/logger';
 import { AIProviderError, type AIProvider, type AIProviderRequest, type AIProviderResponse } from '../ai-provider.interface';
 import { fromGeminiResponse, toFunctionDeclaration, toGeminiContents } from './gemini-mapping';
 import { CLINIC_SYSTEM_INSTRUCTION } from './gemini-system-instruction';
+
+export interface SanitizedGeminiError {
+  name?: string;
+  message?: string;
+  /** HTTP status from the Gemini API, when the failure was an ApiError (e.g. 404 unknown model, 403 permission denied, 429 quota, 503 unavailable). */
+  status?: number;
+  /** Sanitized network-level cause (e.g. a fetch failure's `.cause.code`/`.message` — DNS, TLS, connection refused/timeout), when the failure never reached Gemini's API. */
+  networkCause?: { code?: string; message?: string };
+}
 
 // Task 4C-6 — the first real AIProvider implementation. Gemini-specific
 // code (the @google/genai SDK, its request/response shapes, its
@@ -51,12 +60,14 @@ export class GeminiAIProvider implements AIProvider {
       return fromGeminiResponse(response);
     } catch (err) {
       if (err instanceof AIProviderError) throw err; // already safe (e.g. the malformed-response case above)
-      logger.error({ err: this.sanitizeError(err) }, 'Gemini request failed');
+      const sanitized = this.sanitizeError(err);
+      logger.error({ err: sanitized, model: this.model }, 'Gemini request failed');
       // Deliberately generic and identical for every failure mode (invalid
       // key, network error, rate limit, SDK exception, ...) — Part 10 asks
       // for safe handling of all of these, explicitly not a "sophisticated
       // retry system" or differentiated user-facing messaging.
-      throw new AIProviderError('The AI provider is currently unavailable. Please try again.');
+      // `sanitized` rides along on `.cause` to preserve root cause observability.
+      throw new AIProviderError('The AI provider is currently unavailable. Please try again.', { cause: sanitized });
     }
   }
 
@@ -81,9 +92,37 @@ export class GeminiAIProvider implements AIProvider {
   // Only a safe name/message survive into the log, with the configured key
   // defensively redacted from the message even though it should never
   // appear there in practice.
-  private sanitizeError(err: unknown): { name?: string; message?: string } {
+  private sanitizeError(err: unknown): SanitizedGeminiError {
     if (!(err instanceof Error)) return { message: 'Unknown error' };
-    const message = this.apiKey ? err.message.split(this.apiKey).join('[REDACTED]') : err.message;
-    return { name: err.name, message };
+
+    const redact = (message: string): string =>
+      this.apiKey ? message.split(this.apiKey).join('[REDACTED]') : message;
+
+    const sanitized: SanitizedGeminiError = {
+      name: err.name,
+      message: redact(err.message),
+    };
+
+    if (err instanceof ApiError) {
+      sanitized.status = err.status;
+    } else if ('status' in err && typeof (err as { status?: unknown }).status === 'number') {
+      sanitized.status = (err as { status: number }).status;
+    }
+
+    if (err.cause instanceof Error) {
+      const cause = err.cause as Error & { code?: string };
+      sanitized.networkCause = {
+        code: cause.code,
+        message: redact(cause.message),
+      };
+    } else if (err.cause && typeof err.cause === 'object') {
+      const cause = err.cause as { code?: string; message?: string };
+      sanitized.networkCause = {
+        code: cause.code,
+        message: cause.message ? redact(cause.message) : undefined,
+      };
+    }
+
+    return sanitized;
   }
 }
