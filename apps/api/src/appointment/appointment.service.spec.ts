@@ -89,7 +89,7 @@ describe('AppointmentService', () => {
     const date = nextTestDate();
     const { slot0, slot1 } = localSlotInstants(date);
 
-    const result = await service.checkAvailability({ doctorId, date });
+    const result = await service.checkAvailability({ clinicId, doctorId, date });
 
     expect(result.timezone).toBe(CLINIC_TIMEZONE);
     expect(result.clinicId).toBe(clinicId);
@@ -113,7 +113,7 @@ describe('AppointmentService', () => {
       },
     });
 
-    const result = await service.checkAvailability({ doctorId, date });
+    const result = await service.checkAvailability({ clinicId, doctorId, date });
     expect(result.slots).toEqual([slot1]);
   });
 
@@ -136,7 +136,7 @@ describe('AppointmentService', () => {
       },
     });
 
-    const result = await service.checkAvailability({ doctorId, date });
+    const result = await service.checkAvailability({ clinicId, doctorId, date });
     expect(result.slots).toEqual([]);
   });
 
@@ -157,7 +157,7 @@ describe('AppointmentService', () => {
       },
     });
 
-    const result = await service.checkAvailability({ doctorId, date });
+    const result = await service.checkAvailability({ clinicId, doctorId, date });
     expect(result.slots).toEqual([slot0, slot1]);
   });
 
@@ -179,7 +179,7 @@ describe('AppointmentService', () => {
       },
     });
 
-    const result = await service.checkAvailability({ doctorId, date });
+    const result = await service.checkAvailability({ clinicId, doctorId, date });
     expect(result.slots).toEqual([slot0, slot1]);
   });
 
@@ -251,6 +251,7 @@ describe('AppointmentService', () => {
 
     const confirmed = await service.bookAppointment({
       idempotencyKey: `confirm-8-${date}`,
+      clinicId,
       holdId: held.id,
     });
 
@@ -280,7 +281,7 @@ describe('AppointmentService', () => {
     });
 
     await expect(
-      service.bookAppointment({ idempotencyKey: `confirm-9-${date}`, holdId: expiredHold.id }),
+      service.bookAppointment({ idempotencyKey: `confirm-9-${date}`, clinicId, holdId: expiredHold.id }),
     ).rejects.toBeInstanceOf(ExpiredHoldException);
   });
 

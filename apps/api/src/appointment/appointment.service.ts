@@ -3,9 +3,6 @@ import { type Appointment, Prisma } from '../generated/prisma/client';
 import { AppointmentStatus } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  AppointmentNotCancellableException,
-  AppointmentNotFoundException,
-  AppointmentNotReschedulableException,
   DoctorNotFoundException,
   ExpiredHoldException,
   IdempotencyKeyConflictException,
@@ -15,13 +12,10 @@ import {
   SlotConflictException,
 } from './appointment.errors';
 import type {
-  AppointmentSummaryDto,
   BookAppointmentInput,
-  CancelAppointmentInput,
   CheckAvailabilityInput,
   CheckAvailabilityResult,
   HoldSlotInput,
-  RescheduleAppointmentInput,
 } from './appointment.types';
 import {
   addMinutes,
@@ -50,8 +44,6 @@ const DEFAULT_HOLD_MINUTES = 10;
 // isSerializationConflict below for the two error shapes this covers.
 const MAX_SERIALIZATION_RETRIES = 3;
 
-// listAppointmentsForClinic()'s cap — see that method's own comment.
-const APPOINTMENT_LIST_LIMIT = 200;
 
 interface ResolvedWindow extends TimeWindow {
   slotDurationMinutes: number;
@@ -309,125 +301,8 @@ export class AppointmentService {
     });
   }
 
-  // Resolves by (clinicId, patientId, referenceCode) — see
-  // CancelAppointmentInput's own comment for why. Idempotent: cancelling an
-  // already-CANCELLED appointment returns it unchanged rather than
-  // erroring, matching every other write in this service's replay
-  // handling; a COMPLETED, NO_SHOW, or already-RESCHEDULED appointment is a
-  // genuine invalid transition and does error.
-  async cancelAppointment(input: CancelAppointmentInput): Promise<Appointment> {
-    const appointment = await this.prisma.appointment.findFirst({
-      where: { clinicId: input.clinicId, patientId: input.patientId, referenceCode: input.referenceCode },
-    });
-    if (!appointment) throw new AppointmentNotFoundException(input.referenceCode);
-    if (appointment.status === AppointmentStatus.CANCELLED) return appointment;
-    if (appointment.status !== AppointmentStatus.HELD && appointment.status !== AppointmentStatus.CONFIRMED) {
-      throw new AppointmentNotCancellableException(appointment.status);
-    }
-
-    return this.prisma.appointment.update({
-      where: { id: appointment.id },
-      data: { status: AppointmentStatus.CANCELLED, cancelledReason: input.reason ?? null, holdExpiresAt: null },
-    });
-  }
-
-  // Cancels the original (status -> RESCHEDULED, distinct from CANCELLED so
-  // the reason a slot didn't happen is never conflated with "the patient
-  // just cancelled") and books a new CONFIRMED appointment for the new
-  // time — same schedule-window/conflict validation and SERIALIZABLE
-  // transaction as bookDirect() above, not a separate, less-safe path.
-  // Idempotent the same way bookDirect() is: replaying the same
-  // idempotencyKey returns the already-created new appointment rather than
-  // creating a second one or re-cancelling the (already-RESCHEDULED)
-  // original.
-  async rescheduleAppointment(input: RescheduleAppointmentInput): Promise<Appointment> {
-    if (input.newStart >= input.newEnd) throw new BadRequestException('newStart must be before newEnd.');
-
-    return this.runSerializable(async (tx) => {
-      const existingNew = await tx.appointment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
-      if (existingNew) return existingNew;
-
-      const original = await tx.appointment.findFirst({
-        where: { clinicId: input.clinicId, patientId: input.patientId, referenceCode: input.referenceCode },
-      });
-      if (!original) throw new AppointmentNotFoundException(input.referenceCode);
-      if (original.status !== AppointmentStatus.HELD && original.status !== AppointmentStatus.CONFIRMED) {
-        throw new AppointmentNotReschedulableException(original.status);
-      }
-
-      const doctor = await tx.doctor.findUnique({ where: { id: original.doctorId }, include: { clinic: true } });
-      if (!doctor) throw new DoctorNotFoundException(original.doctorId);
-
-      const localDate = localDateOf(input.newStart, doctor.clinic.timezone);
-      const windows = await this.resolveScheduleWindows(tx, doctor.id, localDate, doctor.clinic.timezone);
-      const withinSchedule = windows.some((w) => w.start <= input.newStart && input.newEnd <= w.end);
-      if (!withinSchedule) throw new NoAvailabilityException();
-
-      // Excludes the original from its own conflict check — it occupies
-      // the OLD interval, which is irrelevant to whether the NEW interval
-      // is free (and it is about to move to RESCHEDULED regardless).
-      const conflict = await this.findConflict(tx, doctor.id, input.newStart, input.newEnd, original.id);
-      if (conflict) throw new SlotConflictException();
-
-      await tx.appointment.update({
-        where: { id: original.id },
-        data: { status: AppointmentStatus.RESCHEDULED, cancelledReason: 'Rescheduled to a new time.' },
-      });
-
-      return this.createAppointment(tx, {
-        clinicId: original.clinicId,
-        doctorId: original.doctorId,
-        patientId: original.patientId,
-        scheduledStart: input.newStart,
-        scheduledEnd: input.newEnd,
-        status: AppointmentStatus.CONFIRMED,
-        idempotencyKey: input.idempotencyKey,
-        createdBy: input.createdBy,
-        sourceConversationId: input.sourceConversationId ?? original.sourceConversationId,
-        sourceChannel: input.sourceChannel ?? original.sourceChannel,
-      });
-    });
-  }
-
-  // Phase 2 production-readiness pass — the minimal read-only staff-portal
-  // view (see AppointmentController.list()). Most-recent-first is the
-  // simplest useful ordering for "am I blind to appointment activity" —
-  // no filter/pagination is added beyond a sensible cap, matching
-  // KnowledgeController.list()'s own "no pagination yet" scope for a
-  // single-clinic pilot's current volume.
-  async listAppointmentsForClinic(clinicId: string): Promise<AppointmentSummaryDto[]> {
-    // One extra query, not a join on every row: every appointment in this
-    // list belongs to the same clinic, so its timezone is fetched once and
-    // copied onto each DTO row rather than reshaping the include above.
-    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicId }, select: { timezone: true } });
-    const timezone = clinic?.timezone ?? 'UTC';
-
-    const rows = await this.prisma.appointment.findMany({
-      where: { clinicId },
-      orderBy: [{ scheduledStart: 'desc' }],
-      take: APPOINTMENT_LIST_LIMIT,
-      include: {
-        patient: { select: { id: true, displayName: true } },
-        doctor: { select: { id: true, name: true } },
-      },
-    });
-
-    return rows.map((row) => ({
-      id: row.id,
-      referenceCode: row.referenceCode,
-      status: row.status,
-      scheduledStart: row.scheduledStart.toISOString(),
-      scheduledEnd: row.scheduledEnd.toISOString(),
-      patient: { id: row.patient.id, displayName: row.patient.displayName },
-      doctor: { id: row.doctor.id, name: row.doctor.name },
-      createdBy: row.createdBy,
-      sourceChannel: row.sourceChannel,
-      cancelledReason: row.cancelledReason,
-      timezone,
-    }));
-  }
-
   // Resolves the open working windows for a doctor on a given clinic-local
+
   // calendar date. Per docs/architecture/01-domain-model.md's DoctorSchedule
   // fields ("day_of_week or specific date") and "is_exception
   // (holiday/override)": a specificDate row, when present for the date,

@@ -15,10 +15,8 @@ import { InboundAiService } from './inbound-ai.service';
 import { GeminiAIProvider } from './providers/gemini.provider';
 import { ToolRegistry } from './tool.types';
 import { createBookAppointmentTool } from './tools/book-appointment.tool';
-import { createCancelAppointmentTool } from './tools/cancel-appointment.tool';
 import { createCheckAvailabilityTool } from './tools/check-availability.tool';
 import { createEscalateToHumanTool } from './tools/escalate-to-human.tool';
-import { createRescheduleAppointmentTool } from './tools/reschedule-appointment.tool';
 import { createSearchClinicKnowledgeTool } from './tools/search-clinic-knowledge.tool';
 import { createSendMessageTool } from './tools/send-message.tool';
 
@@ -110,8 +108,6 @@ import { createSendMessageTool } from './tools/send-message.tool';
         const registry = new ToolRegistry();
         registry.register(createCheckAvailabilityTool(appointmentService));
         registry.register(createBookAppointmentTool(appointmentService));
-        registry.register(createCancelAppointmentTool(appointmentService));
-        registry.register(createRescheduleAppointmentTool(appointmentService));
         registry.register(createSendMessageTool(dispatcher));
         registry.register(createSearchClinicKnowledgeTool(knowledgeService));
         // Task 7-8 — registered after search_clinic_knowledge/send_message

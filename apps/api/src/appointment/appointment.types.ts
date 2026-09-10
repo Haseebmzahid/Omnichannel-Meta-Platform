@@ -6,6 +6,7 @@ export interface AvailabilitySlot {
 }
 
 export interface CheckAvailabilityInput {
+  clinicId: string;
   doctorId: string;
   /** Clinic-local calendar date, "YYYY-MM-DD". */
   date: string;
@@ -46,6 +47,7 @@ export interface HoldSlotInput {
 //     appointment.service.ts).
 export interface BookAppointmentInput {
   idempotencyKey: string;
+  clinicId: string;
   holdId?: string;
   doctorId?: string;
   patientId?: string;
@@ -55,3 +57,4 @@ export interface BookAppointmentInput {
   sourceConversationId?: string;
   sourceChannel?: ChannelKey;
 }
+
