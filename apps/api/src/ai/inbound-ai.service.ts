@@ -90,7 +90,10 @@ export class InboundAiService {
       // MessageService.handleUnexpectedError() already do for their own
       // boundaries.
       const safe = err instanceof Error ? { name: err.name, message: err.message } : { message: 'Unknown error' };
-      logger.error({ err: safe, conversationId: result.conversation.id }, 'InboundAi: AI processing failed for this inbound message');
+      logger.error(
+        { err: safe, conversationId: result.conversation.id },
+        `InboundAi: AI processing failed for this inbound message: ${safe.message}`,
+      );
       return null;
     }
   }

@@ -48,15 +48,35 @@ export function toGeminiContents(messages: AIMessage[]): Content[] {
       const name = message.toolName ?? '';
       const id = message.toolCallId ?? '';
       const args = message.toolArguments ?? {};
-      contents.push({ role: 'model', parts: [{ functionCall: { id, name, args } }] });
-      contents.push({ role: 'user', parts: [createPartFromFunctionResponse(id, name, parseToolResult(message.content))] });
+      appendContent(contents, { role: 'model', parts: [{ functionCall: { id, name, args } }] });
+      appendContent(contents, { role: 'user', parts: [createPartFromFunctionResponse(id, name, parseToolResult(message.content))] });
       continue;
     }
 
-    contents.push({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }] });
+    appendContent(contents, { role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }] });
+  }
+
+  // Gemini multiturn constraint: conversation history must start with a 'user' turn.
+  // Strip any leading model text turns (e.g. if the conversation history starts with
+  // an outbound clinic template or staff message).
+  while (contents.length > 0 && contents[0]?.role === 'model' && !contents[0]?.parts?.some((p) => 'functionCall' in p)) {
+    contents.shift();
   }
 
   return contents;
+}
+
+// Persisted channel messages can contain multiple patient messages before
+// the backend has produced a reply (for example after a transient provider
+// failure). Gemini requires alternating user/model Content roles, so retain
+// every message as an ordered part while combining adjacent same-role turns.
+function appendContent(contents: Content[], next: Content): void {
+  const previous = contents.at(-1);
+  if (previous && previous.role === next.role) {
+    previous.parts = [...(previous.parts ?? []), ...(next.parts ?? [])];
+    return;
+  }
+  contents.push(next);
 }
 
 function parseToolResult(content: string): Record<string, unknown> {

@@ -33,6 +33,51 @@ describe('toGeminiContents', () => {
     ]);
   });
 
+  it('combines consecutive patient messages into one Gemini user turn', () => {
+    const contents = toGeminiContents([
+      { role: 'user', content: 'First inbound message that received no response.' },
+      { role: 'user', content: 'Second inbound message.' },
+    ]);
+
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [{ text: 'First inbound message that received no response.' }, { text: 'Second inbound message.' }],
+      },
+    ]);
+  });
+
+  it('strips leading model turns so the sequence always begins with a user turn', () => {
+    const contents = toGeminiContents([
+      { role: 'assistant', content: 'Welcome template message from clinic.' },
+      { role: 'assistant', content: 'Follow up reminder.' },
+      { role: 'user', content: 'Hello doctor' },
+    ]);
+
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [{ text: 'Hello doctor' }],
+      },
+    ]);
+  });
+
+  it('combines consecutive assistant messages into one Gemini model turn', () => {
+    const contents = toGeminiContents([
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Part 1 of reply.' },
+      { role: 'assistant', content: 'Part 2 of reply.' },
+    ]);
+
+    expect(contents).toEqual([
+      { role: 'user', parts: [{ text: 'Hello' }] },
+      {
+        role: 'model',
+        parts: [{ text: 'Part 1 of reply.' }, { text: 'Part 2 of reply.' }],
+      },
+    ]);
+  });
+
   it('reconstructs a matching model/functionCall turn immediately before a tool result turn', () => {
     const messages: AIMessage[] = [
       { role: 'user', content: 'is dr 1 free tomorrow?' },

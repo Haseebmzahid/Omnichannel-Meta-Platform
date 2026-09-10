@@ -69,9 +69,11 @@ describe('AiOrchestratorService', () => {
 
     const response = await orchestrator.handle({ context: fakeContext, message: 'is dr 1 free on jan 7?' });
 
-    // Dispatched to AppointmentService with exactly the validated arguments
-    // — no reimplementation of the availability query in the AI layer.
-    expect(fakeAppointmentService.checkAvailability).toHaveBeenCalledWith(toolCallArgs);
+    // Dispatched to AppointmentService with the validated arguments plus the
+    // trusted clinicId from context (never the model's own arguments) — the
+    // clinic-ownership boundary check-availability.tool.ts's own comment
+    // describes.
+    expect(fakeAppointmentService.checkAvailability).toHaveBeenCalledWith({ ...toolCallArgs, clinicId: fakeContext.clinicId });
 
     expect(response.text).toBe('Dr. 1 is open at 9:00.');
     expect(response.toolCalls).toEqual([

@@ -61,7 +61,12 @@ export class GeminiAIProvider implements AIProvider {
     } catch (err) {
       if (err instanceof AIProviderError) throw err; // already safe (e.g. the malformed-response case above)
       const sanitized = this.sanitizeError(err);
-      logger.error({ err: sanitized, model: this.model }, 'Gemini request failed');
+      const statusSuffix = sanitized.status ? ` (HTTP ${sanitized.status})` : '';
+      const errorDetail = sanitized.message ? `: ${sanitized.message}` : '';
+      logger.error(
+        { err: sanitized, model: this.model },
+        `Gemini request failed [${this.model}]${statusSuffix}${errorDetail}`,
+      );
       // Deliberately generic and identical for every failure mode (invalid
       // key, network error, rate limit, SDK exception, ...) — Part 10 asks
       // for safe handling of all of these, explicitly not a "sophisticated
