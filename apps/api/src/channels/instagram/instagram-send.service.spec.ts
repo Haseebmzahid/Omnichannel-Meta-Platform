@@ -172,4 +172,19 @@ describe('InstagramSendService', () => {
     const [url] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
     expect(url).toContain('graph.facebook.com'); // asserted against the fake, not a live host
   });
+
+  it('12. dynamically retrieves access token from token getter function', async () => {
+    let dynamicToken = 'initial-token';
+    const fetchImpl = mockFetch(() => jsonResponse(200, { recipient_id: RECIPIENT_IGSID, message_id: 'ig-mid-ABC' }));
+    const service = new InstagramSendService(() => dynamicToken, API_VERSION, fetchImpl);
+
+    await service.sendText(RECIPIENT_IGSID, 'hi 1');
+    let [, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer initial-token');
+
+    dynamicToken = 'updated-token-after-oauth';
+    await service.sendText(RECIPIENT_IGSID, 'hi 2');
+    [, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[1] as [string, RequestInit];
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer updated-token-after-oauth');
+  });
 });

@@ -21,13 +21,18 @@ import { Injectable } from '@nestjs/common';
 @Injectable()
 export class InstagramAccountResolverService {
   constructor(
-    private readonly configuredAccountId: string | undefined,
+    private readonly accountIdSource: string | undefined | (() => string | undefined),
     private readonly configuredClinicId: string | undefined,
   ) {}
 
+  private getAccountId(): string | undefined {
+    return typeof this.accountIdSource === 'function' ? this.accountIdSource() : this.accountIdSource;
+  }
+
   resolveClinicId(accountId: string): string | null {
-    if (!this.configuredAccountId || !this.configuredClinicId) return null;
-    if (accountId !== this.configuredAccountId) return null;
+    const configuredAccountId = this.getAccountId();
+    if (!configuredAccountId || !this.configuredClinicId) return null;
+    if (accountId !== configuredAccountId) return null;
     return this.configuredClinicId;
   }
 }

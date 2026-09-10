@@ -6,12 +6,16 @@ import { MediaStorageModule } from '../../media/media-storage.module';
 import { MessageService } from '../../messaging/message.service';
 import { MessagingModule } from '../../messaging/messaging.module';
 import { InstagramAccountResolverService } from './instagram-account-resolver.service';
+import { InstagramCredentialStore } from './instagram-credential-store.service';
 import { InstagramMediaIngestService } from './instagram-media.service';
+import { InstagramOAuthController } from './instagram-oauth.controller';
+import { InstagramOAuthService } from './instagram-oauth.service';
 import { InstagramOutboundService } from './instagram-outbound.service';
 import { InstagramSendService } from './instagram-send.service';
 import { InstagramSignatureService } from './instagram-signature.service';
 import { InstagramWebhookController } from './instagram-webhook.controller';
 import { InstagramWebhookVerificationService } from './instagram-webhook-verification.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 // The Instagram inbound + outbound-text adapter slice (docs/architecture/
 // 02-channel-adapters.md, ADR-001, ADR-008), mirroring
@@ -36,7 +40,7 @@ import { InstagramWebhookVerificationService } from './instagram-webhook-verific
 // ai.module.ts's header comment for the full cycle this closes.
 @Module({
   imports: [MessagingModule, forwardRef(() => AiModule), MediaStorageModule],
-  controllers: [InstagramWebhookController],
+  controllers: [InstagramWebhookController, InstagramOAuthController],
   providers: [
     { provide: InstagramSignatureService, useFactory: () => new InstagramSignatureService(config.INSTAGRAM_APP_SECRET) },
     {
@@ -44,12 +48,50 @@ import { InstagramWebhookVerificationService } from './instagram-webhook-verific
       useFactory: () => new InstagramWebhookVerificationService(config.INSTAGRAM_VERIFY_TOKEN),
     },
     {
+      provide: InstagramCredentialStore,
+      useFactory: (prisma: PrismaService) =>
+        new InstagramCredentialStore(
+          prisma,
+          config.INSTAGRAM_ACCESS_TOKEN,
+          config.INSTAGRAM_ACCOUNT_ID,
+          config.INSTAGRAM_CLINIC_ID,
+          config.CREDENTIAL_ENCRYPTION_KEY,
+        ),
+      inject: [PrismaService],
+    },
+    {
       provide: InstagramAccountResolverService,
-      useFactory: () => new InstagramAccountResolverService(config.INSTAGRAM_ACCOUNT_ID, config.INSTAGRAM_CLINIC_ID),
+      useFactory: (credentialStore: InstagramCredentialStore) =>
+        new InstagramAccountResolverService(
+          () => credentialStore.getAccountId(),
+          config.INSTAGRAM_CLINIC_ID,
+        ),
+      inject: [InstagramCredentialStore],
     },
     {
       provide: InstagramSendService,
-      useFactory: () => new InstagramSendService(config.INSTAGRAM_ACCESS_TOKEN, config.INSTAGRAM_API_VERSION),
+      useFactory: (credentialStore: InstagramCredentialStore) =>
+        new InstagramSendService(
+          () => credentialStore.getAccessToken(),
+          config.INSTAGRAM_API_VERSION,
+        ),
+      inject: [InstagramCredentialStore],
+    },
+    {
+      provide: InstagramOAuthService,
+      useFactory: (prisma: PrismaService, credentialStore: InstagramCredentialStore) =>
+        new InstagramOAuthService(
+          config.INSTAGRAM_APP_ID,
+          config.INSTAGRAM_APP_SECRET,
+          config.INSTAGRAM_OAUTH_REDIRECT_URI,
+          config.INSTAGRAM_API_VERSION,
+          fetch,
+          prisma,
+          credentialStore,
+          config.INSTAGRAM_CLINIC_ID,
+          config.CREDENTIAL_ENCRYPTION_KEY,
+        ),
+      inject: [PrismaService, InstagramCredentialStore],
     },
     // Task 7-9 — direct payload.url download, no channel config needed
     // (unlike WhatsApp's token-gated flow) — just MEDIA_STORAGE/MessageService
@@ -61,6 +103,6 @@ import { InstagramWebhookVerificationService } from './instagram-webhook-verific
     },
     InstagramOutboundService,
   ],
-  exports: [InstagramOutboundService],
+  exports: [InstagramOutboundService, InstagramOAuthService, InstagramCredentialStore],
 })
 export class InstagramModule {}

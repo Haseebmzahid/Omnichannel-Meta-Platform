@@ -299,6 +299,29 @@ describe('loadConfig', () => {
       expect(loadConfig({}).INSTAGRAM_API_VERSION).toBe('v26.0');
       expect(loadConfig({ INSTAGRAM_API_VERSION: 'v27.0' }).INSTAGRAM_API_VERSION).toBe('v27.0');
     });
+
+    it('parses optional INSTAGRAM_APP_ID and INSTAGRAM_OAUTH_REDIRECT_URI', () => {
+      const config = loadConfig({
+        INSTAGRAM_APP_ID: '1234567890',
+        INSTAGRAM_OAUTH_REDIRECT_URI: 'https://api.example.com/auth/instagram/callback',
+        CREDENTIAL_ENCRYPTION_KEY: 'my-custom-encryption-key-32-bytes-long',
+      });
+      expect(config.INSTAGRAM_APP_ID).toBe('1234567890');
+      expect(config.INSTAGRAM_OAUTH_REDIRECT_URI).toBe('https://api.example.com/auth/instagram/callback');
+      expect(config.CREDENTIAL_ENCRYPTION_KEY).toBe('my-custom-encryption-key-32-bytes-long');
+    });
+
+    it('rejects CREDENTIAL_ENCRYPTION_KEY shorter than 32 characters', () => {
+      expect(() => loadConfig({ CREDENTIAL_ENCRYPTION_KEY: 'too-short' })).toThrow(/CREDENTIAL_ENCRYPTION_KEY/);
+    });
+
+    it('requires the dedicated encryption key when Instagram OAuth is enabled', () => {
+      expect(() => loadConfig({ INSTAGRAM_APP_ID: '1234567890' })).toThrow(/CREDENTIAL_ENCRYPTION_KEY is required/);
+    });
+
+    it('rejects invalid INSTAGRAM_OAUTH_REDIRECT_URI that is not a valid URL', () => {
+      expect(() => loadConfig({ INSTAGRAM_OAUTH_REDIRECT_URI: 'not-a-valid-url' })).toThrow(/INSTAGRAM_OAUTH_REDIRECT_URI/);
+    });
   });
 
   describe('optional integration — Messenger', () => {

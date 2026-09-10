@@ -88,3 +88,15 @@ export class InstagramSendNetworkException extends InstagramSendException {
     super(HttpStatus.SERVICE_UNAVAILABLE, 'Could not reach Instagram at this time.');
   }
 }
+
+export class InstagramOAuthNotConfiguredException extends HttpException {
+  constructor(message = 'Instagram OAuth is not configured.') {
+    super(message, HttpStatus.SERVICE_UNAVAILABLE);
+  }
+}
+
+export class InstagramOAuthFailedException extends HttpException {
+  constructor(message = 'Instagram OAuth token exchange failed.') {
+    super(message, HttpStatus.BAD_REQUEST);
+  }
+}

@@ -53,13 +53,18 @@ const PERMISSIONS_ERROR_CODE = 10;
 @Injectable()
 export class InstagramSendService {
   constructor(
-    private readonly accessToken: string | undefined,
+    private readonly tokenSource: string | undefined | (() => string | undefined),
     private readonly apiVersion: string,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
+  private getAccessToken(): string | undefined {
+    return typeof this.tokenSource === 'function' ? this.tokenSource() : this.tokenSource;
+  }
+
   async sendText(recipientId: string, text: string): Promise<InstagramSendResult> {
-    if (!this.accessToken) {
+    const accessToken = this.getAccessToken();
+    if (!accessToken) {
       throw new InstagramSendNotConfiguredException();
     }
 
@@ -75,7 +80,7 @@ export class InstagramSendService {
         method: 'POST',
         headers: {
           // Never logged — only ever placed on the outgoing request.
-          Authorization: `Bearer ${this.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
         body,

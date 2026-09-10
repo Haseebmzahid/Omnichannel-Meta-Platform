@@ -152,6 +152,15 @@ export const envSchema = z
     // implementation time.
     INSTAGRAM_ACCESS_TOKEN: z.string().min(1).optional(),
     INSTAGRAM_API_VERSION: z.string().min(1).default('v26.0'),
+    // Instagram / Meta Business Login OAuth flow:
+    // INSTAGRAM_APP_ID: the Meta App ID (client_id) used to initiate and exchange OAuth codes.
+    // INSTAGRAM_OAUTH_REDIRECT_URI: the exact registered OAuth redirect callback URI
+    //   (defaults to inferring the callback URL at request time if unset).
+    INSTAGRAM_APP_ID: z.string().min(1).optional(),
+    INSTAGRAM_OAUTH_REDIRECT_URI: z.string().url().optional(),
+    // Dedicated secret for encrypting third-party channel credentials at rest (e.g. Page Access Tokens).
+    // Never stored in the database and never shared with another purpose.
+    CREDENTIAL_ENCRYPTION_KEY: z.string().min(32).optional(),
     // Facebook Page Messenger inbound webhook adapter (ADR-008: Messenger's
     // asset spine is App -> Facebook Page, the same Page a clinic's
     // Instagram professional account is linked to). Optional here so the
@@ -260,6 +269,14 @@ export const envSchema = z
       .transform((val) => val === 'true'),
   })
   .superRefine((val, ctx) => {
+    if (val.INSTAGRAM_APP_ID && !val.CREDENTIAL_ENCRYPTION_KEY) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['CREDENTIAL_ENCRYPTION_KEY'],
+        message: 'CREDENTIAL_ENCRYPTION_KEY is required when INSTAGRAM_APP_ID enables OAuth.',
+      });
+    }
+
     if (val.NODE_ENV !== 'production') return;
 
     if (!val.DATABASE_URL) {

@@ -121,6 +121,7 @@ model Clinic {
   conversations      Conversation[]
   appointments       Appointment[]
   knowledgeDocuments KnowledgeDocument[]
+  channelCredentials ChannelCredential[]
 
   @@map("clinics")
 }
@@ -770,4 +771,23 @@ model Appointment {
   @@index([doctorId, scheduledStart])
   @@index([patientId, scheduledStart])
   @@map("appointments")
+}
+
+// Third-party channel credentials (e.g. Meta Page Access Tokens for Instagram)
+// stored encrypted at rest. PostgreSQL is the persistent source of truth.
+model ChannelCredential {
+  id          String     @id @default(uuid()) @db.Uuid
+  clinicId    String     @db.Uuid
+  clinic      Clinic     @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  channelKey  ChannelKey
+  accountRef  String
+  accountName String?
+  accessToken String
+  metadata    Json?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([clinicId, channelKey])
+  @@index([clinicId])
+  @@map("channel_credentials")
 }

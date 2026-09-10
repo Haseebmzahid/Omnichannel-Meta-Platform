@@ -22,4 +22,16 @@ describe('InstagramAccountResolverService', () => {
     expect(new InstagramAccountResolverService('ig-account-1', undefined).resolveClinicId('ig-account-1')).toBeNull();
     expect(new InstagramAccountResolverService(undefined, 'clinic-1').resolveClinicId('ig-account-1')).toBeNull();
   });
+
+  it('5. resolves accountId dynamically from a getter function', () => {
+    let currentAccountId = 'ig-initial-account';
+    const service = new InstagramAccountResolverService(() => currentAccountId, 'clinic-1');
+
+    expect(service.resolveClinicId('ig-initial-account')).toBe('clinic-1');
+    expect(service.resolveClinicId('ig-updated-account')).toBeNull();
+
+    currentAccountId = 'ig-updated-account';
+    expect(service.resolveClinicId('ig-initial-account')).toBeNull();
+    expect(service.resolveClinicId('ig-updated-account')).toBe('clinic-1');
+  });
 });
