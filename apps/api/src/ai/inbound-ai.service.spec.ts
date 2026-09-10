@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Conversation } from '../generated/prisma/client';
 import { ChannelKey, ConversationMode, MessageContentType, MessageDeliveryStatus, MessageDirection, MessageSenderType } from '../generated/prisma/enums';
 import type { IngestInboundMessageResult, MessageWithAttachments } from '../messaging/message.service';
+import type { ChannelOutboundDispatcher } from '../channels/channel-outbound-dispatcher.service';
 import type { AIContext } from './ai-context.types';
 import type { AiContextService } from './ai-context.service';
 import type { AiOrchestratorService } from './ai-orchestrator.service';
@@ -88,14 +89,20 @@ const fakeAIContext: AIContext = {
   mode: 'AI',
 };
 
-function buildService(opts: { buildContext?: ReturnType<typeof vi.fn>; handle?: ReturnType<typeof vi.fn> } = {}) {
+function buildService(opts: {
+  buildContext?: ReturnType<typeof vi.fn>;
+  handle?: ReturnType<typeof vi.fn>;
+  sendText?: ReturnType<typeof vi.fn>;
+} = {}) {
   const buildContext = opts.buildContext ?? vi.fn().mockResolvedValue(fakeAIContext);
   const handle = opts.handle ?? vi.fn().mockResolvedValue({ text: 'ok', toolCalls: [] });
+  const sendText = opts.sendText ?? vi.fn().mockResolvedValue({ messageId: 'm1', delivered: true });
 
   const aiContextService = { buildContext } as unknown as AiContextService;
   const orchestrator = { handle } as unknown as AiOrchestratorService;
+  const dispatcher = { sendText } as unknown as ChannelOutboundDispatcher;
 
-  return { service: new InboundAiService(aiContextService, orchestrator), buildContext, handle };
+  return { service: new InboundAiService(aiContextService, orchestrator, dispatcher), buildContext, handle, sendText };
 }
 
 describe('InboundAiService', () => {
@@ -169,5 +176,37 @@ describe('InboundAiService', () => {
     await service.processInboundMessage(fakeIngestResult({ conversation: { channelKey: ChannelKey.INSTAGRAM } }));
 
     expect(handle).toHaveBeenCalledTimes(2);
+  });
+
+  it('dispatches final text response via ChannelOutboundDispatcher when not already dispatched by a tool', async () => {
+    const handle = vi.fn().mockResolvedValue({
+      text: 'The doctor is available tomorrow at 10am.',
+      toolCalls: [],
+      dispatchedOutboundMessage: false,
+    });
+    const { service, sendText } = buildService({ handle });
+
+    await service.processInboundMessage(fakeIngestResult());
+
+    expect(sendText).toHaveBeenCalledTimes(1);
+    expect(sendText).toHaveBeenCalledWith({
+      clinicId: CLINIC_ID,
+      conversationId: CONVERSATION_ID,
+      text: 'The doctor is available tomorrow at 10am.',
+      senderType: 'AI',
+    });
+  });
+
+  it('does not dispatch text response if a messaging tool already dispatched an outbound message', async () => {
+    const handle = vi.fn().mockResolvedValue({
+      text: 'Closing note',
+      toolCalls: [],
+      dispatchedOutboundMessage: true,
+    });
+    const { service, sendText } = buildService({ handle });
+
+    await service.processInboundMessage(fakeIngestResult());
+
+    expect(sendText).not.toHaveBeenCalled();
   });
 });

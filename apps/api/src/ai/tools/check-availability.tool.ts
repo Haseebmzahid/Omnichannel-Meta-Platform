@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { AppointmentService } from '../../appointment/appointment.service';
-import type { CheckAvailabilityInput } from '../../appointment/appointment.types';
 import type { ToolDefinition } from '../tool.types';
 
 // Task 4C-5, Part 4 — the one real domain tool registered in this task.
@@ -11,13 +10,23 @@ import type { ToolDefinition } from '../tool.types';
 // any of that service's schedule/conflict logic. Errors (e.g.
 // DoctorNotFoundException) are left to propagate to ToolRegistry.dispatch,
 // which is where every tool's error handling is unified (tool.types.ts).
+//
+// clinicId is deliberately NOT part of the AI-facing inputSchema — same
+// "never trust a model-supplied clinic/patient identifier" boundary as
+// book/cancel/reschedule-appointment.tool.ts. It is read only from the
+// trusted AIContext the orchestrator's caller assembled and threaded into
+// AppointmentService.checkAvailability(), which independently verifies the
+// requested doctorId actually belongs to that clinic — closing the gap
+// where a doctorId from another clinic could otherwise leak that doctor's
+// real schedule.
 
 const inputSchema = z.object({
-  doctorId: z.uuid(),
+  /** Optional doctor identifier or name. If omitted, resolves to the clinic's configured primary doctor. */
+  doctorId: z.string().optional(),
   /** Clinic-local calendar date, "YYYY-MM-DD". */
   date: z.iso.date(),
   slotDurationMinutes: z.number().int().positive().optional(),
-}) satisfies z.ZodType<CheckAvailabilityInput>;
+});
 
 export type CheckAvailabilityToolInput = z.infer<typeof inputSchema>;
 
@@ -35,16 +44,24 @@ export interface CheckAvailabilityToolOutput {
 }
 
 export function createCheckAvailabilityTool(
-  appointmentService: Pick<AppointmentService, 'checkAvailability'>,
+  appointmentService: Pick<AppointmentService, 'checkAvailability'> & Partial<Pick<AppointmentService, 'resolveDoctorId'>>,
 ): ToolDefinition<CheckAvailabilityToolInput, CheckAvailabilityToolOutput> {
   return {
     name: 'check_availability',
     description:
       "Returns a doctor's real open appointment slots for a given clinic-local date. " +
+      "doctorId is optional and defaults to the clinic's primary doctor. " +
       'Backed by the appointment engine — never inferred or invented by the model.',
     inputSchema,
-    handler: async (input): Promise<CheckAvailabilityToolOutput> => {
-      const result = await appointmentService.checkAvailability(input);
+    handler: async (input, context): Promise<CheckAvailabilityToolOutput> => {
+      const doctorId = typeof appointmentService.resolveDoctorId === 'function'
+        ? await appointmentService.resolveDoctorId(context.clinicId, input.doctorId)
+        : (input.doctorId ?? '');
+      const result = await appointmentService.checkAvailability({
+        ...input,
+        doctorId,
+        clinicId: context.clinicId,
+      });
       return {
         success: true,
         doctorId: result.doctorId,

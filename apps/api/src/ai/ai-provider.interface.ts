@@ -15,6 +15,8 @@ export interface AIMessage {
   /** Set on a 'tool' message: which tool call this result answers. */
   toolCallId?: string;
   toolName?: string;
+  /** Preserves the actual arguments supplied by the model in the preceding call. */
+  toolArguments?: Record<string, unknown>;
 }
 
 // A provider-agnostic description of a callable tool, derived from a

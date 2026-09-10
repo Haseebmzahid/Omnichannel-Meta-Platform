@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ChannelOutboundDispatcher } from '../channels/channel-outbound-dispatcher.service';
 import { ConversationMode } from '../generated/prisma/enums';
 import { logger } from '../logging/logger';
 import type { IngestInboundMessageResult } from '../messaging/message.service';
@@ -24,6 +25,7 @@ export class InboundAiService {
   constructor(
     private readonly aiContextService: AiContextService,
     private readonly orchestrator: AiOrchestratorService,
+    private readonly dispatcher?: ChannelOutboundDispatcher,
   ) {}
 
   // Never throws: a webhook's 200 acknowledgment to Meta must not depend
@@ -66,7 +68,21 @@ export class InboundAiService {
         conversation: result.conversation,
       });
 
-      return await this.orchestrator.handle({ context, message: result.message.text });
+      const response = await this.orchestrator.handle({ context, message: result.message.text });
+
+      // If the turn did not already dispatch an outbound message via a messaging tool
+      // (e.g. send_message or escalate_to_human), deliver the model's final conversational
+      // text response through ChannelOutboundDispatcher.
+      if (this.dispatcher && !response.dispatchedOutboundMessage && response.text && response.text.trim().length > 0) {
+        await this.dispatcher.sendText({
+          clinicId: context.clinicId,
+          conversationId: context.conversationId,
+          text: response.text.trim(),
+          senderType: 'AI',
+        });
+      }
+
+      return response;
     } catch (err) {
       // Never a raw provider/Prisma error, stack trace, or credential —
       // logged server-side only, exactly as ToolRegistry.dispatch() and

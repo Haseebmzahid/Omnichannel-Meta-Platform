@@ -62,6 +62,25 @@ describe('toGeminiContents', () => {
     });
   });
 
+  it('preserves toolArguments in the synthesized model functionCall turn', () => {
+    const messages: AIMessage[] = [
+      { role: 'user', content: 'check slots' },
+      {
+        role: 'tool',
+        toolCallId: 'call-1',
+        toolName: 'check_availability',
+        toolArguments: { doctorId: 'doc-uuid-1', date: '2026-09-10' },
+        content: JSON.stringify({ success: true, output: { slots: [] } }),
+      },
+    ];
+
+    const contents = toGeminiContents(messages);
+    expect(contents[1]).toEqual({
+      role: 'model',
+      parts: [{ functionCall: { id: 'call-1', name: 'check_availability', args: { doctorId: 'doc-uuid-1', date: '2026-09-10' } } }],
+    });
+  });
+
   it('falls back to a { result: content } wrapper when a tool message is not JSON', () => {
     const messages: AIMessage[] = [
       { role: 'tool', toolCallId: 'call-2', toolName: 'echo', content: 'not json' },
@@ -83,6 +102,22 @@ describe('fromGeminiResponse', () => {
     });
 
     expect(result.toolCalls).toEqual([{ id: 'call-1', name: 'check_availability', arguments: { doctorId: 'd1' } }]);
+  });
+
+  it('does not access response.text when functionCalls are present', () => {
+    let textGetterCalled = false;
+    const response = {
+      functionCalls: [{ id: 'call-1', name: 'check_availability', args: { doctorId: 'd1' } }],
+      get text() {
+        textGetterCalled = true;
+        return 'warning would be emitted';
+      },
+    };
+
+    const result = fromGeminiResponse(response);
+    expect(textGetterCalled).toBe(false);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.text).toBeUndefined();
   });
 
   it('generates a fallback id when Gemini omits one', () => {

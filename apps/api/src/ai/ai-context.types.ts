@@ -46,4 +46,6 @@ export interface AIToolInvocationRecord {
 export interface AIResponse {
   text: string;
   toolCalls: AIToolInvocationRecord[];
+  /** True if a messaging tool (e.g. send_message, escalate_to_human) successfully dispatched an outbound message this turn. */
+  dispatchedOutboundMessage?: boolean;
 }

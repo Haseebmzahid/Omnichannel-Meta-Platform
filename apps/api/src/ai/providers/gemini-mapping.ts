@@ -47,7 +47,8 @@ export function toGeminiContents(messages: AIMessage[]): Content[] {
     if (message.role === 'tool') {
       const name = message.toolName ?? '';
       const id = message.toolCallId ?? '';
-      contents.push({ role: 'model', parts: [{ functionCall: { id, name, args: {} } }] });
+      const args = message.toolArguments ?? {};
+      contents.push({ role: 'model', parts: [{ functionCall: { id, name, args } }] });
       contents.push({ role: 'user', parts: [createPartFromFunctionResponse(id, name, parseToolResult(message.content))] });
       continue;
     }
@@ -92,9 +93,17 @@ export function fromGeminiResponse(response: MinimalGenerateContentResponse): AI
     });
   }
 
-  if (!response.text && (!toolCalls || toolCalls.length === 0)) {
+  // If tool calls are present, avoid evaluating response.text. The @google/genai SDK's
+  // text getter inspects response parts and emits a console warning whenever non-text
+  // parts (such as functionCall) are present.
+  if (toolCalls && toolCalls.length > 0) {
+    return { toolCalls };
+  }
+
+  const text = response.text;
+  if (!text) {
     throw new AIProviderError('Gemini returned an empty response.');
   }
 
-  return { text: response.text, toolCalls };
+  return { text };
 }

@@ -32,6 +32,7 @@ export class AiOrchestratorService {
     const messages = this.buildInitialMessages(request);
     const tools = this.toolRegistry.describeAll();
     const toolCalls: AIToolInvocationRecord[] = [];
+    let dispatchedOutboundMessage = false;
     // Task 7-8's deterministic escalation gate — fresh per inbound message,
     // never persisted across turns/conversations. Threaded through every
     // dispatch() call this turn as an opaque state bag; this orchestrator
@@ -45,16 +46,35 @@ export class AiOrchestratorService {
       const response = await this.provider.generate({ messages, tools });
 
       if (!response.toolCalls || response.toolCalls.length === 0) {
-        return { text: response.text ?? '', toolCalls };
+        return dispatchedOutboundMessage
+          ? { text: response.text ?? '', toolCalls, dispatchedOutboundMessage: true }
+          : { text: response.text ?? '', toolCalls };
       }
 
       for (const call of response.toolCalls) {
         const result = await this.toolRegistry.dispatch(call.name, call.arguments, request.context, grounding);
         toolCalls.push({ name: call.name, result });
+
+        if (
+          result.success &&
+          (call.name === 'send_message' ||
+            call.name === 'escalate_to_human' ||
+            (typeof result.output === 'object' &&
+              result.output !== null &&
+              'to' in result.output &&
+              (result.output as { to?: string }).to === 'escalate_to_human'))
+        ) {
+          dispatchedOutboundMessage = true;
+        }
+
         messages.push({
           role: 'tool',
           toolCallId: call.id,
           toolName: call.name,
+          toolArguments:
+            typeof call.arguments === 'object' && call.arguments !== null
+              ? (call.arguments as Record<string, unknown>)
+              : {},
           content: JSON.stringify(result),
         });
       }

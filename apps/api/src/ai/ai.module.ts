@@ -14,8 +14,11 @@ import { AI_PROVIDER } from './ai-provider.interface';
 import { InboundAiService } from './inbound-ai.service';
 import { GeminiAIProvider } from './providers/gemini.provider';
 import { ToolRegistry } from './tool.types';
+import { createBookAppointmentTool } from './tools/book-appointment.tool';
+import { createCancelAppointmentTool } from './tools/cancel-appointment.tool';
 import { createCheckAvailabilityTool } from './tools/check-availability.tool';
 import { createEscalateToHumanTool } from './tools/escalate-to-human.tool';
+import { createRescheduleAppointmentTool } from './tools/reschedule-appointment.tool';
 import { createSearchClinicKnowledgeTool } from './tools/search-clinic-knowledge.tool';
 import { createSendMessageTool } from './tools/send-message.tool';
 
@@ -106,6 +109,9 @@ import { createSendMessageTool } from './tools/send-message.tool';
       ) => {
         const registry = new ToolRegistry();
         registry.register(createCheckAvailabilityTool(appointmentService));
+        registry.register(createBookAppointmentTool(appointmentService));
+        registry.register(createCancelAppointmentTool(appointmentService));
+        registry.register(createRescheduleAppointmentTool(appointmentService));
         registry.register(createSendMessageTool(dispatcher));
         registry.register(createSearchClinicKnowledgeTool(knowledgeService));
         // Task 7-8 — registered after search_clinic_knowledge/send_message
@@ -127,11 +133,11 @@ import { createSendMessageTool } from './tools/send-message.tool';
     AiContextService,
     InboundAiService,
   ],
-  // AI_PROVIDER exported alongside the rest so HealthController (registered
-  // directly on AppModule, which already imports AiModule) can inject the
-  // same GeminiAIProvider binding for the /health/gemini diagnostic route
-  // below — no new provider or module, just widening this module's export
-  // list to include a token it already binds internally.
+  // AI_PROVIDER is exported alongside the rest in case a future consumer
+  // (e.g. an internal diagnostic route, added and later removed once
+  // Gemini connectivity was confirmed working in production) needs the
+  // same GeminiAIProvider binding — HealthController itself does not use
+  // it today (see health.controller.ts: a plain liveness check only).
   exports: [AiOrchestratorService, ToolRegistry, InboundAiService, AI_PROVIDER],
 })
 export class AiModule {}
