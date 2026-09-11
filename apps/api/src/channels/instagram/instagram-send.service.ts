@@ -18,19 +18,10 @@ const PERMISSIONS_ERROR_CODE = 10;
 
 // Owns everything Instagram-specific about sending: URL construction, the
 // Authorization header, the request payload, the HTTP call, and Meta's
-// response shape. Re-VERIFIED against developers.facebook.com/docs/
-// messenger-platform/instagram/features/send-message and .../send-messages
-// at implementation time:
-//   POST https://graph.facebook.com/{version}/me/messages
+// response shape for Instagram API with Instagram Login:
+//   POST https://graph.instagram.com/{version}/{ig-user-id}/messages
 //   { recipient: { id: <IGSID> }, message: { text } }
 //   success shape { recipient_id, message_id }
-//
-// Unlike WhatsApp's /{phone-number-id}/messages, the Instagram/Messenger
-// Platform Send API is addressed at /me/messages — the Page access token
-// itself identifies which IG professional account is sending, so no
-// account id belongs in the URL or payload (confirming ADR-008's
-// Page-linked model: outbound needs only the Page token, the same asset
-// already used for inbound account resolution's underlying Page).
 //
 // Meta's own docs show the token as an `access_token` query parameter, but
 // the Graph API accepts `Authorization: Bearer <token>` equally on every
@@ -54,6 +45,7 @@ const PERMISSIONS_ERROR_CODE = 10;
 export class InstagramSendService {
   constructor(
     private readonly tokenSource: string | undefined | (() => string | undefined),
+    private readonly accountIdSource: string | undefined | (() => string | undefined),
     private readonly apiVersion: string,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
@@ -62,13 +54,18 @@ export class InstagramSendService {
     return typeof this.tokenSource === 'function' ? this.tokenSource() : this.tokenSource;
   }
 
+  private getAccountId(): string | undefined {
+    return typeof this.accountIdSource === 'function' ? this.accountIdSource() : this.accountIdSource;
+  }
+
   async sendText(recipientId: string, text: string): Promise<InstagramSendResult> {
     const accessToken = this.getAccessToken();
-    if (!accessToken) {
+    const accountId = this.getAccountId();
+    if (!accessToken || !accountId) {
       throw new InstagramSendNotConfiguredException();
     }
 
-    const url = `https://graph.facebook.com/${this.apiVersion}/me/messages`;
+    const url = `https://graph.instagram.com/${this.apiVersion}/${encodeURIComponent(accountId)}/messages`;
     const body = JSON.stringify({
       recipient: { id: recipientId },
       message: { text },
@@ -105,7 +102,10 @@ export class InstagramSendService {
     return { externalMessageId };
   }
 
-  private toSendException(status: number, payload: unknown): InstagramAuthException | InstagramOutsideWindowException | InstagramSendRejectedException {
+  private toSendException(
+    status: number,
+    payload: unknown,
+  ): InstagramAuthException | InstagramOutsideWindowException | InstagramSendRejectedException {
     const { code } = extractMetaErrorCode(payload);
     // Never log the payload itself — Meta's error object can echo request
     // content back, only the classification fields.
@@ -129,7 +129,10 @@ function extractMetaErrorCode(payload: unknown): { code?: number } {
   return { code: typeof error.code === 'number' ? error.code : undefined };
 }
 
-function sanitizeNetworkError(err: unknown): { name?: string; message?: string } {
+function sanitizeNetworkError(err: unknown): {
+  name?: string;
+  message?: string;
+} {
   if (!(err instanceof Error)) return { message: 'Unknown error' };
   return { name: err.name, message: err.message };
 }

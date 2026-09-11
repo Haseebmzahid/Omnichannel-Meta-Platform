@@ -39,15 +39,11 @@ describe('InstagramOAuthController (HTTP)', () => {
       tokenObtained: true,
       instagramAccountId: 'ig-account-456',
       instagramUsername: 'drghulfamclinic',
-      pageId: 'page-123',
-      pageName: "Dr. Ghulfam's Clinic",
       persisted: true,
       message: 'Instagram Professional Account successfully identified and authenticated.',
     });
 
-    const res = await request(app.getHttpServer())
-      .get('/auth/instagram/callback')
-      .query({ code: 'valid-meta-code' });
+    const res = await request(app.getHttpServer()).get('/auth/instagram/callback').query({ code: 'valid-meta-code' });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
@@ -55,8 +51,6 @@ describe('InstagramOAuthController (HTTP)', () => {
       tokenObtained: true,
       instagramAccountId: 'ig-account-456',
       instagramUsername: 'drghulfamclinic',
-      pageId: 'page-123',
-      pageName: "Dr. Ghulfam's Clinic",
       persisted: true,
       message: 'Instagram Professional Account successfully identified and authenticated.',
     });
@@ -75,12 +69,10 @@ describe('InstagramOAuthController (HTTP)', () => {
   });
 
   it('3. GET /auth/instagram/callback fails with 400 when Meta returns an error', async () => {
-    const res = await request(app.getHttpServer())
-      .get('/auth/instagram/callback')
-      .query({
-        error: 'access_denied',
-        error_description: 'Permissions were not granted by the user.',
-      });
+    const res = await request(app.getHttpServer()).get('/auth/instagram/callback').query({
+      error: 'access_denied',
+      error_description: 'Permissions were not granted by the user.',
+    });
 
     expect(res.status).toBe(400);
     expect(res.body.message).toContain('Meta OAuth authorization failed');

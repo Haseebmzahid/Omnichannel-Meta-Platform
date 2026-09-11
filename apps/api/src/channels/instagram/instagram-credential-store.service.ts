@@ -18,7 +18,7 @@ export interface InstagramCredentials {
  * to the INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_ACCOUNT_ID environment variables.
  *
  * When an OAuth callback successfully completes, the database is updated with
- * the encrypted Page Access Token and this cache is immediately updated.
+ * the encrypted Instagram User Access Token and this cache is immediately updated.
  */
 @Injectable()
 export class InstagramCredentialStore implements OnModuleInit {
@@ -74,7 +74,9 @@ export class InstagramCredentialStore implements OnModuleInit {
           );
         }
       } else {
-        this.logger.log('No Instagram credential found in database. Using environment variable fallback if configured.');
+        this.logger.log(
+          'No Instagram credential found in database. Using environment variable fallback if configured.',
+        );
       }
     } catch {
       this.logger.warn('Failed to query database for Instagram credentials. Falling back to environment variables.');

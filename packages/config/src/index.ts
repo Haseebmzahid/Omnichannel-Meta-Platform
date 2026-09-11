@@ -137,15 +137,11 @@ export const envSchema = z
     INSTAGRAM_APP_SECRET: z.string().min(1).optional(),
     INSTAGRAM_ACCOUNT_ID: z.string().min(1).optional(),
     INSTAGRAM_CLINIC_ID: z.string().min(1).optional(),
-    // Instagram outbound send slice. INSTAGRAM_ACCESS_TOKEN: the Page
-    // access token for the Messenger/Instagram Platform Send API's
-    // `POST /me/messages` (re-VERIFIED against developers.facebook.com/
-    // docs/messenger-platform/instagram/features/send-message at
-    // implementation time) — see
-    // apps/api/src/channels/instagram/instagram-send.service.ts. Never
-    // logged. Unlike WhatsApp, no separate account id belongs in this
-    // call — /me/messages is addressed purely by the token itself, so
-    // INSTAGRAM_ACCOUNT_ID (above) is not reused here.
+    // Instagram outbound send slice. INSTAGRAM_ACCESS_TOKEN is the Instagram
+    // User Access Token issued by Instagram Login. INSTAGRAM_ACCOUNT_ID is
+    // the authenticated professional account used in the versioned
+    // graph.instagram.com /{ig-user-id}/messages endpoint. Required
+    // permission: instagram_business_manage_messages.
     // INSTAGRAM_API_VERSION is deliberately configurable rather than
     // hardcoded, for the same rolling-retirement reason as
     // WHATSAPP_API_VERSION; defaults to the version verified current at
@@ -158,7 +154,7 @@ export const envSchema = z
     //   (defaults to inferring the callback URL at request time if unset).
     INSTAGRAM_APP_ID: z.string().min(1).optional(),
     INSTAGRAM_OAUTH_REDIRECT_URI: z.string().url().optional(),
-    // Dedicated secret for encrypting third-party channel credentials at rest (e.g. Page Access Tokens).
+    // Dedicated secret for encrypting third-party channel credentials at rest.
     // Never stored in the database and never shared with another purpose.
     CREDENTIAL_ENCRYPTION_KEY: z.string().min(32).optional(),
     // Facebook Page Messenger inbound webhook adapter (ADR-008: Messenger's
@@ -340,7 +336,10 @@ export const envSchema = z
 // loadConfig()'s own fallback below) always has a real string for both.
 // AppConfig reflects that guarantee rather than the schema's internal
 // `.optional()` escape hatch.
-export type AppConfig = Omit<z.infer<typeof envSchema>, 'DATABASE_URL' | 'WEB_ORIGIN'> & { DATABASE_URL: string; WEB_ORIGIN: string };
+export type AppConfig = Omit<z.infer<typeof envSchema>, 'DATABASE_URL' | 'WEB_ORIGIN'> & {
+  DATABASE_URL: string;
+  WEB_ORIGIN: string;
+};
 
 /**
  * Parses and validates process.env into a typed AppConfig. Throws a single,

@@ -42,7 +42,10 @@ import { PrismaService } from '../../prisma/prisma.service';
   imports: [MessagingModule, forwardRef(() => AiModule), MediaStorageModule],
   controllers: [InstagramWebhookController, InstagramOAuthController],
   providers: [
-    { provide: InstagramSignatureService, useFactory: () => new InstagramSignatureService(config.INSTAGRAM_APP_SECRET) },
+    {
+      provide: InstagramSignatureService,
+      useFactory: () => new InstagramSignatureService(config.INSTAGRAM_APP_SECRET),
+    },
     {
       provide: InstagramWebhookVerificationService,
       useFactory: () => new InstagramWebhookVerificationService(config.INSTAGRAM_VERIFY_TOKEN),
@@ -62,10 +65,7 @@ import { PrismaService } from '../../prisma/prisma.service';
     {
       provide: InstagramAccountResolverService,
       useFactory: (credentialStore: InstagramCredentialStore) =>
-        new InstagramAccountResolverService(
-          () => credentialStore.getAccountId(),
-          config.INSTAGRAM_CLINIC_ID,
-        ),
+        new InstagramAccountResolverService(() => credentialStore.getAccountId(), config.INSTAGRAM_CLINIC_ID),
       inject: [InstagramCredentialStore],
     },
     {
@@ -73,6 +73,7 @@ import { PrismaService } from '../../prisma/prisma.service';
       useFactory: (credentialStore: InstagramCredentialStore) =>
         new InstagramSendService(
           () => credentialStore.getAccessToken(),
+          () => credentialStore.getAccountId(),
           config.INSTAGRAM_API_VERSION,
         ),
       inject: [InstagramCredentialStore],
@@ -98,7 +99,8 @@ import { PrismaService } from '../../prisma/prisma.service';
     // via normal Nest DI.
     {
       provide: InstagramMediaIngestService,
-      useFactory: (mediaStorage: MediaStorage, messageService: MessageService) => new InstagramMediaIngestService(mediaStorage, messageService),
+      useFactory: (mediaStorage: MediaStorage, messageService: MessageService) =>
+        new InstagramMediaIngestService(mediaStorage, messageService),
       inject: [MEDIA_STORAGE, MessageService],
     },
     InstagramOutboundService,
