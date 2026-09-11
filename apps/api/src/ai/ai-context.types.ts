@@ -30,12 +30,16 @@ export interface AIContext {
   channel: 'WHATSAPP' | 'INSTAGRAM' | 'MESSENGER';
   /** Conversation.mode (see docs/architecture/03-conversation-and-inbox.md §5) — who currently owns responding. */
   mode: 'AI' | 'PENDING' | 'HUMAN' | 'PAUSED' | 'SUSPENDED';
+  /** Per-webhook correlation only; never persisted or sent to the model. */
+  traceId?: string;
 }
 
 export interface AIRequest {
   context: AIContext;
   /** The newest inbound message this turn is responding to. */
   message: string;
+  /** Safe correlation metadata for phase timing; never contains message content or credentials. */
+  trace?: { requestId: string; webhookReceivedAt: number };
 }
 
 export interface AIToolInvocationRecord {

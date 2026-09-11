@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { ApiError, GoogleGenAI } from '@google/genai';
 import { logger } from '../../logging/logger';
-import { AIProviderError, type AIProvider, type AIProviderRequest, type AIProviderResponse } from '../ai-provider.interface';
+import {
+  AIProviderError,
+  type AIProvider,
+  type AIProviderRequest,
+  type AIProviderResponse,
+} from '../ai-provider.interface';
 import { fromGeminiResponse, toFunctionDeclaration, toGeminiContents } from './gemini-mapping';
 import { CLINIC_SYSTEM_INSTRUCTION } from './gemini-system-instruction';
 
@@ -35,6 +40,7 @@ export interface SanitizedGeminiError {
 // compromise.
 @Injectable()
 export class GeminiAIProvider implements AIProvider {
+  private static readonly REQUEST_TIMEOUT_MS = 15_000;
   private client?: GoogleGenAI;
 
   constructor(
@@ -51,6 +57,9 @@ export class GeminiAIProvider implements AIProvider {
         contents: toGeminiContents(request.messages),
         config: {
           systemInstruction: CLINIC_SYSTEM_INSTRUCTION,
+          httpOptions: {
+            timeout: GeminiAIProvider.REQUEST_TIMEOUT_MS,
+          },
           ...(request.tools.length > 0
             ? { tools: [{ functionDeclarations: request.tools.map(toFunctionDeclaration) }] }
             : {}),
@@ -100,8 +109,7 @@ export class GeminiAIProvider implements AIProvider {
   private sanitizeError(err: unknown): SanitizedGeminiError {
     if (!(err instanceof Error)) return { message: 'Unknown error' };
 
-    const redact = (message: string): string =>
-      this.apiKey ? message.split(this.apiKey).join('[REDACTED]') : message;
+    const redact = (message: string): string => (this.apiKey ? message.split(this.apiKey).join('[REDACTED]') : message);
 
     const sanitized: SanitizedGeminiError = {
       name: err.name,

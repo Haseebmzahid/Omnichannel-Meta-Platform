@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { AppointmentService } from '../../appointment/appointment.service';
 import type { ToolDefinition } from '../tool.types';
+import { resolveAppointmentDate } from './appointment-date';
 
 // Task 4C-5, Part 4 — the one real domain tool registered in this task.
 //
@@ -23,8 +24,8 @@ import type { ToolDefinition } from '../tool.types';
 const inputSchema = z.object({
   /** Optional doctor identifier or name. If omitted, resolves to the clinic's configured primary doctor. */
   doctorId: z.string().optional(),
-  /** Clinic-local calendar date, "YYYY-MM-DD". */
-  date: z.iso.date(),
+  /** Clinic-local date: today, tomorrow, or YYYY-MM-DD. */
+  date: z.string().min(1),
   slotDurationMinutes: z.number().int().positive().optional(),
 });
 
@@ -44,7 +45,9 @@ export interface CheckAvailabilityToolOutput {
 }
 
 export function createCheckAvailabilityTool(
-  appointmentService: Pick<AppointmentService, 'checkAvailability'> & Partial<Pick<AppointmentService, 'resolveDoctorId'>>,
+  appointmentService: Pick<AppointmentService, 'checkAvailability'> &
+    Partial<Pick<AppointmentService, 'resolveDoctorId'>>,
+  now: () => Date = () => new Date(),
 ): ToolDefinition<CheckAvailabilityToolInput, CheckAvailabilityToolOutput> {
   return {
     name: 'check_availability',
@@ -54,11 +57,14 @@ export function createCheckAvailabilityTool(
       'Backed by the appointment engine — never inferred or invented by the model.',
     inputSchema,
     handler: async (input, context): Promise<CheckAvailabilityToolOutput> => {
-      const doctorId = typeof appointmentService.resolveDoctorId === 'function'
-        ? await appointmentService.resolveDoctorId(context.clinicId, input.doctorId)
-        : (input.doctorId ?? '');
+      const doctorId =
+        typeof appointmentService.resolveDoctorId === 'function'
+          ? await appointmentService.resolveDoctorId(context.clinicId, input.doctorId)
+          : (input.doctorId ?? '');
+      const date = resolveAppointmentDate(input.date, now());
       const result = await appointmentService.checkAvailability({
         ...input,
+        date,
         doctorId,
         clinicId: context.clinicId,
       });

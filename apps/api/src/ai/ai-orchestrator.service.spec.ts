@@ -73,7 +73,10 @@ describe('AiOrchestratorService', () => {
     // trusted clinicId from context (never the model's own arguments) — the
     // clinic-ownership boundary check-availability.tool.ts's own comment
     // describes.
-    expect(fakeAppointmentService.checkAvailability).toHaveBeenCalledWith({ ...toolCallArgs, clinicId: fakeContext.clinicId });
+    expect(fakeAppointmentService.checkAvailability).toHaveBeenCalledWith({
+      ...toolCallArgs,
+      clinicId: fakeContext.clinicId,
+    });
 
     expect(response.text).toBe('Dr. 1 is open at 9:00.');
     expect(response.toolCalls).toEqual([
@@ -102,7 +105,9 @@ describe('AiOrchestratorService', () => {
   });
 
   it('11. search_clinic_knowledge dispatches through the same orchestration loop, scoped by trusted context', async () => {
-    const search = vi.fn().mockResolvedValue({ found: true, results: [{ category: 'HOURS', title: 'Hours', body: 'Mon-Sat 9-6.' }] });
+    const search = vi
+      .fn()
+      .mockResolvedValue({ found: true, results: [{ category: 'HOURS', title: 'Hours', body: 'Mon-Sat 9-6.' }] });
 
     const registry = new ToolRegistry();
     registry.register(createSearchClinicKnowledgeTool({ search }));
@@ -154,10 +159,14 @@ describe('AiOrchestratorService — deterministic escalation enforcement (Task 7
     registry.register(createEscalateToHumanTool({ sendText }, { escalateToHuman }));
 
     const provider = new FakeAIProvider([
-      { toolCalls: [{ id: 'call-1', name: 'search_clinic_knowledge', arguments: { query: 'do you accept insurance' } }] },
+      {
+        toolCalls: [{ id: 'call-1', name: 'search_clinic_knowledge', arguments: { query: 'do you accept insurance' } }],
+      },
       // Non-compliant: the model tries to answer directly with a
       // fabricated claim instead of escalating, despite found:false.
-      { toolCalls: [{ id: 'call-2', name: 'send_message', arguments: { text: 'Yes, we accept all insurance plans.' } }] },
+      {
+        toolCalls: [{ id: 'call-2', name: 'send_message', arguments: { text: 'Yes, we accept all insurance plans.' } }],
+      },
       { text: 'done' },
     ]);
     const orchestrator = new AiOrchestratorService(provider, registry);
@@ -182,10 +191,16 @@ describe('AiOrchestratorService — deterministic escalation enforcement (Task 7
     registry.register(createEscalateToHumanTool({ sendText }, { escalateToHuman }));
 
     const provider = new FakeAIProvider([
-      { toolCalls: [{ id: 'call-1', name: 'search_clinic_knowledge', arguments: { query: 'do you accept insurance' } }] },
+      {
+        toolCalls: [{ id: 'call-1', name: 'search_clinic_knowledge', arguments: { query: 'do you accept insurance' } }],
+      },
       {
         toolCalls: [
-          { id: 'call-2', name: 'escalate_to_human', arguments: { reason: 'insurance question not in KB', patientFacingMessage: 'Connecting you with staff.' } },
+          {
+            id: 'call-2',
+            name: 'escalate_to_human',
+            arguments: { reason: 'insurance question not in KB', patientFacingMessage: 'Connecting you with staff.' },
+          },
         ],
       },
       { text: 'done' },
@@ -199,7 +214,9 @@ describe('AiOrchestratorService — deterministic escalation enforcement (Task 7
   });
 
   it('a normal, grounded reply after found:true is never gated — the ordinary path is unaffected', async () => {
-    const search = vi.fn().mockResolvedValue({ found: true, results: [{ category: 'HOURS', title: 'Hours', body: 'Mon-Sat 9-6.' }] });
+    const search = vi
+      .fn()
+      .mockResolvedValue({ found: true, results: [{ category: 'HOURS', title: 'Hours', body: 'Mon-Sat 9-6.' }] });
     const sendText = vi.fn().mockResolvedValue(fakeDispatcherResult());
 
     const registry = new ToolRegistry();
@@ -210,18 +227,26 @@ describe('AiOrchestratorService — deterministic escalation enforcement (Task 7
 
     const provider = new FakeAIProvider([
       { toolCalls: [{ id: 'call-1', name: 'search_clinic_knowledge', arguments: { query: 'hours' } }] },
-      { toolCalls: [{ id: 'call-2', name: 'send_message', arguments: { text: 'We are open Monday to Saturday, 9am to 6pm.' } }] },
+      {
+        toolCalls: [
+          { id: 'call-2', name: 'send_message', arguments: { text: 'We are open Monday to Saturday, 9am to 6pm.' } },
+        ],
+      },
       { text: 'done' },
     ]);
     const orchestrator = new AiOrchestratorService(provider, registry);
 
     await orchestrator.handle({ context: fakeContext, message: 'what are your hours?' });
 
-    expect(sendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'We are open Monday to Saturday, 9am to 6pm.' }));
+    expect(sendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'We are open Monday to Saturday, 9am to 6pm.' }),
+    );
   });
 
   it('preserves thoughtSignature and rawModelParts on tool message during tool round trip', async () => {
-    const search = vi.fn().mockResolvedValue({ found: true, results: [{ category: 'HOURS', title: 'Hours', body: '9am - 5pm' }] });
+    const search = vi
+      .fn()
+      .mockResolvedValue({ found: true, results: [{ category: 'HOURS', title: 'Hours', body: '9am - 5pm' }] });
     const registry = new ToolRegistry();
     registry.register(createSearchClinicKnowledgeTool({ search }));
 
@@ -260,5 +285,86 @@ describe('AiOrchestratorService — deterministic escalation enforcement (Task 7
     expect(toolMsg).toBeDefined();
     expect(toolMsg?.thoughtSignature).toBe('jwt.signature.token');
     expect(toolMsg?.rawModelParts).toBe(rawParts);
+  });
+
+  it('checks today before the only Gemini request and feeds real available slots into final generation', async () => {
+    const checkAvailability = vi.fn().mockResolvedValue({
+      doctorId: 'doctor-1',
+      clinicId: 'clinic-1',
+      date: '2026-09-11',
+      timezone: 'Asia/Karachi',
+      slots: [{ start: new Date('2026-09-11T04:00:00.000Z'), end: new Date('2026-09-11T04:30:00.000Z') }],
+    });
+    const registry = new ToolRegistry();
+    registry.register(
+      createCheckAvailabilityTool(
+        { checkAvailability, resolveDoctorId: vi.fn().mockResolvedValue('doctor-1') },
+        () => new Date('2026-09-10T19:30:00.000Z'),
+      ),
+    );
+    const provider = new FakeAIProvider([{ text: 'Today is available at 9:00 AM.' }]);
+
+    const response = await new AiOrchestratorService(provider, registry).handle({
+      context: fakeContext,
+      message: 'book me an appointment today',
+    });
+
+    expect(checkAvailability).toHaveBeenCalledWith(
+      expect.objectContaining({ date: '2026-09-11', clinicId: 'clinic-1' }),
+    );
+    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls[0]?.messages.some((message) => message.role === 'tool')).toBe(true);
+    expect(response.text).toContain('9:00');
+  });
+
+  it('does not call Gemini or claim unavailability when the availability tool fails', async () => {
+    const registry = new ToolRegistry();
+    registry.register(
+      createCheckAvailabilityTool({
+        checkAvailability: vi.fn().mockRejectedValue(new Error('db down')),
+        resolveDoctorId: vi.fn().mockResolvedValue('doctor-1'),
+      }),
+    );
+    const provider = new FakeAIProvider([{ text: 'Tomorrow is unavailable.' }]);
+
+    const response = await new AiOrchestratorService(provider, registry).handle({
+      context: fakeContext,
+      message: 'book me tomorrow',
+    });
+
+    expect(provider.calls).toHaveLength(0);
+    expect(response.text).toContain('could not check');
+    expect(response.text).not.toContain('unavailable');
+  });
+
+  it('treats a follow-up "tomorrow" as appointment intent from recent history', async () => {
+    const checkAvailability = vi
+      .fn()
+      .mockResolvedValue({
+        doctorId: 'doctor-1',
+        clinicId: 'clinic-1',
+        date: '2026-09-12',
+        timezone: 'Asia/Karachi',
+        slots: [],
+      });
+    const registry = new ToolRegistry();
+    registry.register(
+      createCheckAvailabilityTool(
+        { checkAvailability, resolveDoctorId: vi.fn().mockResolvedValue('doctor-1') },
+        () => new Date('2026-09-10T19:30:00.000Z'),
+      ),
+    );
+    const provider = new FakeAIProvider([{ text: 'There are no open slots tomorrow.' }]);
+    await new AiOrchestratorService(provider, registry).handle({
+      context: {
+        ...fakeContext,
+        recentMessages: [
+          { role: 'user', content: 'book me an appointment today' },
+          { role: 'assistant', content: 'Which date?' },
+        ],
+      },
+      message: 'tomorrow',
+    });
+    expect(checkAvailability).toHaveBeenCalledWith(expect.objectContaining({ date: '2026-09-12' }));
   });
 });

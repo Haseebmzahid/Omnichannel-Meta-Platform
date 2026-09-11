@@ -18,6 +18,7 @@ export interface SendWhatsAppTextInput {
   senderStaffId?: string;
   /** See Message.idempotencyKey — omit for a one-off send with no natural retry key. */
   idempotencyKey?: string;
+  traceId?: string;
 }
 
 export interface SendWhatsAppTextResult {
@@ -92,15 +93,49 @@ export class WhatsAppOutboundService {
       return {
         message,
         delivered: message.deliveryStatus === MessageDeliveryStatus.SENT,
-        failureReason: message.deliveryStatus === MessageDeliveryStatus.FAILED ? (message.failureMessage ?? undefined) : undefined,
+        failureReason:
+          message.deliveryStatus === MessageDeliveryStatus.FAILED ? (message.failureMessage ?? undefined) : undefined,
       };
     }
 
+    const sendStartedAt = Date.now();
     try {
+      logger.info(
+        {
+          requestId: input.traceId,
+          conversationId: input.conversationId,
+          phase: 'whatsapp_send_start',
+          startedAt: new Date(sendStartedAt).toISOString(),
+        },
+        'WhatsApp timing',
+      );
       const result = await this.sendService.sendText(recipientWaId, input.text);
+      const sendEndedAt = Date.now();
+      logger.info(
+        {
+          requestId: input.traceId,
+          conversationId: input.conversationId,
+          phase: 'whatsapp_send_end',
+          success: true,
+          durationMs: sendEndedAt - sendStartedAt,
+          endedAt: new Date(sendEndedAt).toISOString(),
+        },
+        'WhatsApp timing',
+      );
       const sent = await this.messageService.markOutboundMessageSent(message.id, result.externalMessageId);
       return { message: sent, delivered: true };
     } catch (err) {
+      logger.info(
+        {
+          requestId: input.traceId,
+          conversationId: input.conversationId,
+          phase: 'whatsapp_send_end',
+          success: false,
+          durationMs: Date.now() - sendStartedAt,
+          endedAt: new Date().toISOString(),
+        },
+        'WhatsApp timing',
+      );
       const failure = toFailureRecord(err);
       const failed = await this.messageService.markOutboundMessageFailed(message.id, failure);
 

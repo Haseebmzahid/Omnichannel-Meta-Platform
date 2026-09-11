@@ -52,6 +52,7 @@ describe('GeminiAIProvider', () => {
       contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
       config: expect.objectContaining({
         systemInstruction: expect.any(String),
+        httpOptions: { timeout: 15_000 },
         tools: [
           {
             functionDeclarations: [{ name: 'check_availability', description: 'desc', parametersJsonSchema: { type: 'object' } }],

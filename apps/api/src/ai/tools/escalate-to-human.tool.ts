@@ -51,10 +51,10 @@ export function createEscalateToHumanTool(
     description:
       'Hands this conversation off to clinic staff when you cannot confidently answer a clinic-fact question — ' +
       'for example, search_clinic_knowledge returned found:false for something that is clearly a real clinic ' +
-      "question (not small talk), or the patient explicitly asks for a person. Never guess instead of calling " +
+      'question (not small talk), or the patient explicitly asks for a person. Never guess instead of calling ' +
       'this. `reason` is a short, staff-facing note, never shown to the patient. `patientFacingMessage` is what ' +
       'the patient sees — write it warmly, in their own language and script, acknowledging the handoff only: ' +
-      "never answer their original question here, and never promise a specific response time.",
+      'never answer their original question here, and never promise a specific response time.',
     inputSchema,
     handler: async (input, context): Promise<EscalateToHumanToolOutput> => {
       await dispatcher.sendText({
@@ -62,10 +62,15 @@ export function createEscalateToHumanTool(
         conversationId: context.conversationId,
         text: input.patientFacingMessage,
         senderType: 'AI',
+        ...(context.traceId ? { traceId: context.traceId } : {}),
         idempotencyKey: deriveIdempotencyKey(context.conversationId, input.reason),
       });
 
-      const escalated = await conversationService.escalateToHuman(context.clinicId, context.conversationId, input.reason);
+      const escalated = await conversationService.escalateToHuman(
+        context.clinicId,
+        context.conversationId,
+        input.reason,
+      );
       return { success: true, escalated };
     },
     // Always 'closes': an escalation is, by definition, a resolution of

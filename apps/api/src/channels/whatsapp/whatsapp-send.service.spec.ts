@@ -53,6 +53,7 @@ describe('WhatsAppSendService', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe(`Bearer ${ACCESS_TOKEN}`);
     expect(headers['Content-Type']).toBe('application/json');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('3. generates the correct WhatsApp text payload', async () => {

@@ -27,6 +27,8 @@ export interface ChannelOutboundTextInput {
   senderStaffId?: string;
   /** See Message.idempotencyKey — omit for a one-off send with no natural retry key. */
   idempotencyKey?: string;
+  /** Safe request correlation for timing diagnostics. */
+  traceId?: string;
 }
 
 // What a channel adapter's own sendText() returns — the Prisma row plus a

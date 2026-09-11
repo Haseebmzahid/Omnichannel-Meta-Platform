@@ -98,6 +98,7 @@ export function createSendMessageTool(
         conversationId: context.conversationId,
         text: input.text,
         senderType: 'AI',
+        ...(context.traceId ? { traceId: context.traceId } : {}),
         idempotencyKey: deriveIdempotencyKey(context.conversationId, input.text),
       });
 
@@ -123,7 +124,8 @@ export function createSendMessageTool(
       blockedByOpenGap: {
         redirectToTool: 'escalate_to_human',
         buildFallbackInput: (originalInput) => ({
-          reason: 'Unresolved clinic-fact question — automatic safeguard (model attempted to reply without a grounded source).',
+          reason:
+            'Unresolved clinic-fact question — automatic safeguard (model attempted to reply without a grounded source).',
           patientFacingMessage: pickAutoEscalationMessage(originalInput),
         }),
       },
@@ -145,7 +147,10 @@ export function createSendMessageTool(
 const URDU_SCRIPT_PATTERN = /[؀-ۿ]/;
 
 function pickAutoEscalationMessage(originalInput: unknown): string {
-  const blockedText = typeof originalInput === 'object' && originalInput !== null && 'text' in originalInput ? String((originalInput as { text: unknown }).text) : '';
+  const blockedText =
+    typeof originalInput === 'object' && originalInput !== null && 'text' in originalInput
+      ? String((originalInput as { text: unknown }).text)
+      : '';
 
   return URDU_SCRIPT_PATTERN.test(blockedText)
     ? 'اس سوال کے لیے میں آپ کو ہمارے کلینک اسٹاف سے جوڑ رہی ہوں — وہ جلد آپ سے رابطہ کریں گے۔'

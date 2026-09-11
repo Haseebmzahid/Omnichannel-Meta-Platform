@@ -14,6 +14,7 @@ export interface WhatsAppSendResult {
 }
 
 const OUTSIDE_WINDOW_ERROR_CODE = 131047;
+const WHATSAPP_SEND_TIMEOUT_MS = 15_000;
 
 // Owns everything WhatsApp-specific about sending: URL construction, the
 // Authorization header, the request payload, the HTTP call, and Meta's
@@ -64,6 +65,7 @@ export class WhatsAppSendService {
     try {
       response = await this.fetchImpl(url, {
         method: 'POST',
+        signal: AbortSignal.timeout(WHATSAPP_SEND_TIMEOUT_MS),
         headers: {
           // Never logged — only ever placed on the outgoing request.
           Authorization: `Bearer ${this.accessToken}`,
@@ -91,7 +93,10 @@ export class WhatsAppSendService {
     return { externalMessageId };
   }
 
-  private toSendException(status: number, payload: unknown): WhatsAppAuthException | WhatsAppOutsideWindowException | WhatsAppSendRejectedException {
+  private toSendException(
+    status: number,
+    payload: unknown,
+  ): WhatsAppAuthException | WhatsAppOutsideWindowException | WhatsAppSendRejectedException {
     const { code } = extractMetaErrorCode(payload);
     // Never log the payload itself — Meta's error object can echo request
     // content back (Part 7/12 instruction), only the classification fields.

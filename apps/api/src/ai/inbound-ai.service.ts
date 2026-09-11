@@ -37,7 +37,10 @@ export class InboundAiService {
   // non-AI conversation mode, or a caught failure) rather than a separate
   // ok/error union — callers that need to distinguish those cases have
   // the persisted Message/Conversation state to inspect independently.
-  async processInboundMessage(result: IngestInboundMessageResult): Promise<AIResponse | null> {
+  async processInboundMessage(
+    result: IngestInboundMessageResult,
+    trace?: { requestId: string; webhookReceivedAt: number },
+  ): Promise<AIResponse | null> {
     // Duplicate webhook delivery (Part 7 instruction). MessageService's
     // existing (channelAccountRef, externalId) idempotency boundary
     // already tells us, via `created`, whether this exact call resolved to
@@ -63,13 +66,29 @@ export class InboundAiService {
     }
 
     try {
+      const orchestrationStartedAt = Date.now();
+      logger.info(
+        {
+          requestId: trace?.requestId,
+          conversationId: result.conversation.id,
+          phase: 'orchestration_started_at',
+          startedAt: new Date(orchestrationStartedAt).toISOString(),
+          sinceWebhookMs: trace ? orchestrationStartedAt - trace.webhookReceivedAt : undefined,
+        },
+        'Inbound AI timing',
+      );
       const context = await this.aiContextService.buildContext({
         clinicId: result.conversation.clinicId,
         conversation: result.conversation,
         excludeMessageId: result.message.id,
       });
+      if (trace) context.traceId = trace.requestId;
 
-      const response = await this.orchestrator.handle({ context, message: result.message.text });
+      const response = await this.orchestrator.handle({
+        context,
+        message: result.message.text,
+        ...(trace ? { trace } : {}),
+      });
 
       // If the turn did not already dispatch an outbound message via a messaging tool
       // (e.g. send_message or escalate_to_human), deliver the model's final conversational
@@ -80,8 +99,19 @@ export class InboundAiService {
           conversationId: context.conversationId,
           text: response.text.trim(),
           senderType: 'AI',
+          ...(trace ? { traceId: trace.requestId } : {}),
         });
       }
+
+      logger.info(
+        {
+          requestId: trace?.requestId,
+          conversationId: result.conversation.id,
+          phase: 'inbound_ai_end',
+          totalElapsedMs: trace ? Date.now() - trace.webhookReceivedAt : Date.now() - orchestrationStartedAt,
+        },
+        'Inbound AI timing summary',
+      );
 
       return response;
     } catch (err) {
@@ -89,10 +119,10 @@ export class InboundAiService {
       // logged server-side only, exactly as ToolRegistry.dispatch() and
       // MessageService.handleUnexpectedError() already do for their own
       // boundaries.
-      const safe = err instanceof Error ? { name: err.name, message: err.message } : { message: 'Unknown error' };
+      const safe = { name: err instanceof Error ? err.name : 'UnknownError' };
       logger.error(
         { err: safe, conversationId: result.conversation.id },
-        `InboundAi: AI processing failed for this inbound message: ${safe.message}`,
+        'InboundAi: AI processing failed for this inbound message',
       );
       return null;
     }

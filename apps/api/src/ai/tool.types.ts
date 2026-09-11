@@ -97,7 +97,12 @@ export class ToolRegistry {
     }));
   }
 
-  async dispatch(name: string, rawArguments: unknown, context: AIContext, grounding?: GroundingState): Promise<ToolDispatchResult> {
+  async dispatch(
+    name: string,
+    rawArguments: unknown,
+    context: AIContext,
+    grounding?: GroundingState,
+  ): Promise<ToolDispatchResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       return { success: false, error: { code: 'UNKNOWN_TOOL', message: `Unknown tool: "${name}".` } };
@@ -135,12 +140,19 @@ export class ToolRegistry {
       if (err instanceof HttpException) {
         return { success: false, error: { code: 'EXECUTION_ERROR', message: err.message } };
       }
-      logger.error({ tool: name, err }, 'Tool execution failed');
+      logger.error(
+        { tool: name, errorName: err instanceof Error ? err.name : 'UnknownError' },
+        'Tool execution failed',
+      );
       return { success: false, error: { code: 'EXECUTION_ERROR', message: `Tool "${name}" failed to execute.` } };
     }
   }
 
-  private applyGroundingEffect(tool: ToolDefinition<unknown, unknown>, output: unknown, grounding?: GroundingState): void {
+  private applyGroundingEffect(
+    tool: ToolDefinition<unknown, unknown>,
+    output: unknown,
+    grounding?: GroundingState,
+  ): void {
     if (!grounding || !tool.grounding?.effect) return;
     const effect = tool.grounding.effect(output);
     if (effect === 'opens') grounding.gapOpen = true;
@@ -156,27 +168,42 @@ export class ToolRegistry {
   ): Promise<ToolDispatchResult | undefined> {
     const target = this.tools.get(blocked.redirectToTool);
     if (!target) {
-      logger.error({ tool: originalToolName, redirectToTool: blocked.redirectToTool }, 'Grounding-gate redirect target not registered — dispatching original tool instead');
+      logger.error(
+        { tool: originalToolName, redirectToTool: blocked.redirectToTool },
+        'Grounding-gate redirect target not registered — dispatching original tool instead',
+      );
       return undefined;
     }
 
     const fallbackInput = blocked.buildFallbackInput(originalInput, context);
     const parsedFallback = target.inputSchema.safeParse(fallbackInput);
     if (!parsedFallback.success) {
-      logger.error({ tool: originalToolName, redirectToTool: blocked.redirectToTool }, 'Grounding-gate redirect fallback input failed validation — dispatching original tool instead');
+      logger.error(
+        { tool: originalToolName, redirectToTool: blocked.redirectToTool },
+        'Grounding-gate redirect fallback input failed validation — dispatching original tool instead',
+      );
       return undefined;
     }
 
     try {
       const output = await target.handler(parsedFallback.data, context);
       this.applyGroundingEffect(target, output, grounding);
-      return { success: true, output: { redirected: true, from: originalToolName, to: blocked.redirectToTool, result: output } };
+      return {
+        success: true,
+        output: { redirected: true, from: originalToolName, to: blocked.redirectToTool, result: output },
+      };
     } catch (err) {
       if (err instanceof HttpException) {
         return { success: false, error: { code: 'EXECUTION_ERROR', message: err.message } };
       }
-      logger.error({ tool: blocked.redirectToTool, err }, 'Tool execution failed');
-      return { success: false, error: { code: 'EXECUTION_ERROR', message: `Tool "${blocked.redirectToTool}" failed to execute.` } };
+      logger.error(
+        { tool: blocked.redirectToTool, errorName: err instanceof Error ? err.name : 'UnknownError' },
+        'Tool execution failed',
+      );
+      return {
+        success: false,
+        error: { code: 'EXECUTION_ERROR', message: `Tool "${blocked.redirectToTool}" failed to execute.` },
+      };
     }
   }
 }

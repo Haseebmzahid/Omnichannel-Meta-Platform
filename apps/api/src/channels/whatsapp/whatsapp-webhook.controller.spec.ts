@@ -43,7 +43,10 @@ function textMessagePayload(overrides: { type?: string; text?: string; phoneNumb
             field: 'messages',
             value: {
               messaging_product: 'whatsapp',
-              metadata: { phone_number_id: overrides.phoneNumberId ?? PHONE_NUMBER_ID, display_phone_number: '15550001111' },
+              metadata: {
+                phone_number_id: overrides.phoneNumberId ?? PHONE_NUMBER_ID,
+                display_phone_number: '15550001111',
+              },
               contacts: [{ wa_id: '15550002222', profile: { name: 'Test Patient' } }],
               messages: [
                 {
@@ -75,7 +78,10 @@ function statusPayload(overrides: { status?: string; phoneNumberId?: string; ext
             field: 'messages',
             value: {
               messaging_product: 'whatsapp',
-              metadata: { phone_number_id: overrides.phoneNumberId ?? PHONE_NUMBER_ID, display_phone_number: '15550001111' },
+              metadata: {
+                phone_number_id: overrides.phoneNumberId ?? PHONE_NUMBER_ID,
+                display_phone_number: '15550001111',
+              },
               statuses: [
                 {
                   id: overrides.externalMessageId ?? 'wamid.STATUS1',
@@ -181,7 +187,10 @@ describe('WhatsAppWebhookController (HTTP)', () => {
     // after — the inbound message is persisted, with exactly what
     // ingestInboundMessage() resolved to.
     expect(processInboundMessage).toHaveBeenCalledTimes(1);
-    expect(processInboundMessage).toHaveBeenCalledWith({ created: true, message: { id: 'message-1' } });
+    expect(processInboundMessage).toHaveBeenCalledWith(
+      { created: true, message: { id: 'message-1' } },
+      { requestId: expect.any(String), webhookReceivedAt: expect.any(Number) },
+    );
   });
 
   it('4. an invalid signature is rejected and never reaches MessageService (or AI processing)', async () => {
@@ -315,7 +324,15 @@ describe('WhatsAppWebhookController (HTTP)', () => {
                 messaging_product: 'whatsapp',
                 metadata: { phone_number_id: PHONE_NUMBER_ID, display_phone_number: '15550001111' },
                 contacts: [{ wa_id: '15550002222', profile: { name: 'Test Patient' } }],
-                messages: [{ id: 'wamid.TEST1', from: '15550002222', timestamp: '1735689600', type: 'text', text: { body: 'hello' } }],
+                messages: [
+                  {
+                    id: 'wamid.TEST1',
+                    from: '15550002222',
+                    timestamp: '1735689600',
+                    type: 'text',
+                    text: { body: 'hello' },
+                  },
+                ],
                 statuses: [{ id: 'wamid.STATUS12', status: 'sent' }],
               },
             },
@@ -334,6 +351,8 @@ describe('WhatsAppWebhookController (HTTP)', () => {
     expect(res.status).toBe(200);
     expect(ingestInboundMessage).toHaveBeenCalledTimes(1);
     expect(reconcileOutboundDeliveryStatus).toHaveBeenCalledTimes(1);
-    expect(reconcileOutboundDeliveryStatus).toHaveBeenCalledWith(expect.objectContaining({ externalMessageId: 'wamid.STATUS12', status: 'SENT' }));
+    expect(reconcileOutboundDeliveryStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ externalMessageId: 'wamid.STATUS12', status: 'SENT' }),
+    );
   });
 });

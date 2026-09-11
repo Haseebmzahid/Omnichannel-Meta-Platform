@@ -1,6 +1,7 @@
 import { Controller, Get, HttpCode, HttpStatus, Post, Query, Req } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
+import { randomUUID } from 'node:crypto';
 import { InboundAiService } from '../../ai/inbound-ai.service';
 import { logger } from '../../logging/logger';
 import { MessageService } from '../../messaging/message.service';
@@ -64,6 +65,12 @@ export class WhatsAppWebhookController {
   @Post()
   @HttpCode(HttpStatus.OK)
   async handleEvent(@Req() req: RawBodyRequest<Request>): Promise<{ received: true }> {
+    const webhookReceivedAt = Date.now();
+    const requestId = randomUUID();
+    logger.info(
+      { requestId, phase: 'webhook_received_at', receivedAt: new Date(webhookReceivedAt).toISOString() },
+      'WhatsApp timing',
+    );
     const signatureHeader = req.headers['x-hub-signature-256'];
     if (!this.signature.verify(req.rawBody, signatureHeader)) {
       throw new WhatsAppInvalidSignatureException();
@@ -87,8 +94,18 @@ export class WhatsAppWebhookController {
         // path. InboundAiService itself decides whether this delivery is
         // new vs a duplicate, and never throws, so a failed/duplicate AI
         // turn never affects this webhook's 200 acknowledgment below.
+        const persistenceStartedAt = Date.now();
         const ingestResult = await this.messageService.ingestInboundMessage(message);
-        await this.inboundAiService.processInboundMessage(ingestResult);
+        logger.info(
+          {
+            requestId,
+            conversationId: ingestResult.conversation?.id,
+            phase: 'inbound_persistence_end',
+            durationMs: Date.now() - persistenceStartedAt,
+          },
+          'WhatsApp timing',
+        );
+        await this.inboundAiService.processInboundMessage(ingestResult, { requestId, webhookReceivedAt });
 
         // Task 7-9 — media download/upload happens only for a genuinely
         // new message (never re-processed for a duplicate/idempotent
@@ -108,6 +125,11 @@ export class WhatsAppWebhookController {
         await this.messageService.reconcileOutboundDeliveryStatus(update);
       }
     }
+
+    logger.info(
+      { requestId, phase: 'webhook_end', totalElapsedMs: Date.now() - webhookReceivedAt },
+      'WhatsApp timing summary',
+    );
 
     return { received: true };
   }
